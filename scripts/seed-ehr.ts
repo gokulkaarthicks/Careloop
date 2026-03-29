@@ -1,6 +1,6 @@
 /**
- * Synthetic EHR seed — 60 patients, relational rows, demo-compatible Jordan cohort.
- * Run: npm run db:push && npm run db:seed
+ * Synthetic EHR seed — two fully relational demo patients + reference data; the app
+ * merges five bundled `SEED` patients in the UI directory. Run: `npm run db:push && npm run db:seed`.
  */
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
@@ -8,53 +8,6 @@ import { join } from "path";
 import * as schema from "../src/lib/ehr/schema";
 
 const DB = join(process.cwd(), "data", "careloop.sqlite");
-
-const COHORTS = [
-  "chronic_care",
-  "acute_care",
-  "follow_up",
-  "refill",
-  "missed_adherence",
-  "multi_encounter",
-] as const;
-
-const GIVEN = [
-  "Alex",
-  "Riley",
-  "Jordan",
-  "Casey",
-  "Morgan",
-  "Taylor",
-  "Jamie",
-  "Quinn",
-  "Avery",
-  "Reese",
-];
-const FAMILY = [
-  "Nguyen",
-  "Patel",
-  "Garcia",
-  "Okafor",
-  "Silva",
-  "Kim",
-  "Brown",
-  "Davis",
-  "Wilson",
-  "Martinez",
-];
-
-function mulberry32(seed: number) {
-  return function () {
-    let t = (seed += 0x6d2b79f5);
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function pad(n: number, w = 3) {
-  return String(n).padStart(w, "0");
-}
 
 function clearDb(sqlite: Database.Database) {
   sqlite.exec("PRAGMA foreign_keys = OFF");
@@ -122,13 +75,13 @@ async function main() {
   await db.insert(schema.patients).values({
     id: jordanId,
     mrn: "MRN-77821",
-    displayName: "Jordan Ellis",
-    familyName: "Ellis",
-    givenName: "Jordan",
+    displayName: "Thaddeus Wainwright",
+    familyName: "Wainwright",
+    givenName: "Thaddeus",
     dateOfBirth: "1988-04-12",
     sexAtBirth: "M",
     phone: "+1 (555) 010-4421",
-    email: "jordan.ellis@email.test",
+    email: "thaddeus.wainwright@email.test",
     status: "active",
     notes: "Prefers afternoon visits; pharmacy Harborview.",
     primaryCareProviderId: provId,
@@ -379,14 +332,14 @@ async function main() {
   /* ─── Sam — upcoming appointment (fixes empty schedule in UI) ─── */
   await db.insert(schema.patients).values({
     id: samId,
-    mrn: "MRN-88902",
-    displayName: "Sam Rivera",
-    familyName: "Rivera",
-    givenName: "Sam",
+    mrn: "MRN-441902",
+    displayName: "Amara Okafor",
+    familyName: "Okafor",
+    givenName: "Amara",
     dateOfBirth: "1976-11-03",
     sexAtBirth: "F",
     phone: "+1 (555) 010-8891",
-    email: "sam.rivera@email.test",
+    email: "amara.okafor@email.test",
     status: "active",
     primaryCareProviderId: provId,
     payerId,
@@ -463,170 +416,11 @@ async function main() {
     updatedAt: now,
   });
 
-  /* ─── Synthetic cohort pat_ehr_003 … pat_ehr_060 ─── */
-  const rng = mulberry32(42);
-  for (let i = 3; i <= 60; i++) {
-    const pid = `pat_ehr_${pad(i)}`;
-    const cohort = COHORTS[(i - 3) % COHORTS.length];
-    const g = GIVEN[i % GIVEN.length];
-    const f = FAMILY[(i * 3) % FAMILY.length];
-    const displayName = `${g} ${f}`;
-    const yob = 1948 + Math.floor(rng() * 52);
-    const mob = 1 + Math.floor(rng() * 12);
-    const dob = `${yob}-${pad(mob, 2)}-${pad(1 + Math.floor(rng() * 28), 2)}`;
-    const mrn = `MRN-${80000 + i}`;
-    const sex = rng() > 0.5 ? "M" : "F";
-
-    await db.insert(schema.patients).values({
-      id: pid,
-      mrn,
-      displayName,
-      familyName: f,
-      givenName: g,
-      dateOfBirth: dob,
-      sexAtBirth: sex,
-      phone: `+1 (555) ${String(200 + i).padStart(3, "0")}-${String(1000 + i).padStart(4, "0")}`,
-      email: `${g.toLowerCase()}.${f.toLowerCase()}@patient.demo`,
-      status: "active",
-      primaryCareProviderId: provId,
-      payerId,
-      preferredPharmacyId: pharmId,
-      cohortTag: cohort,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    await db.insert(schema.patientDiagnoses).values({
-      id: `dx_${pid}_1`,
-      patientId: pid,
-      code: cohort === "acute_care" ? "J06.9" : "I10",
-      description:
-        cohort === "acute_care"
-          ? "Acute upper respiratory infection, unspecified"
-          : "Essential (primary) hypertension",
-      codingSystem: "ICD10",
-    });
-
-    await db.insert(schema.medications).values({
-      id: `med_${pid}_1`,
-      patientId: pid,
-      name: cohort === "refill" ? "Omeprazole" : "Amlodipine",
-      dose: "5 mg",
-      route: "oral",
-      frequency: "once daily",
-      status: "active",
-      startDate: "2024-01-01",
-      recordedAt: now,
-      updatedAt: now,
-    });
-
-    if (cohort === "missed_adherence") {
-      await db.insert(schema.adherenceChecks).values({
-        id: `adh_${pid}_1`,
-        patientId: pid,
-        medicationId: `med_${pid}_1`,
-        checkType: "self_report",
-        status: "overdue",
-        scheduledFor: new Date(Date.now() - 7 * 86400000).toISOString(),
-        priority: "normal",
-        ownerRole: "patient",
-        nextAction: "Complete medication check-in",
-        notes: "Demo: missed window",
-        createdAt: now,
-        updatedAt: now,
-      });
-    }
-
-    await db.insert(schema.labs).values({
-      id: `lab_${pid}_1`,
-      patientId: pid,
-      code: "BMP",
-      name: "Creatinine",
-      value: (0.9 + rng() * 0.4).toFixed(1),
-      unit: "mg/dL",
-      refRange: "0.7-1.2",
-      abnormalFlag: rng() > 0.85,
-      collectedAt: new Date(Date.now() - 14 * 86400000).toISOString(),
-    });
-
-    await db.insert(schema.encounters).values({
-      id: `enc_${pid}_last`,
-      patientId: pid,
-      providerId: provId,
-      encounterType: "office",
-      status: "finished",
-      chiefComplaint: "Routine follow-up",
-      notes: "Stable; continue current plan.",
-      priority: "normal",
-      nextAction: "Schedule next visit",
-      ownerRole: "provider",
-      startedAt: new Date(Date.now() - 120 * 86400000).toISOString(),
-      endedAt: new Date(Date.now() - 120 * 86400000 + 20 * 60000).toISOString(),
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    if (cohort === "multi_encounter") {
-      await db.insert(schema.encounters).values({
-        id: `enc_${pid}_2`,
-        patientId: pid,
-        providerId: provId,
-        encounterType: "telehealth",
-        status: "finished",
-        chiefComplaint: "Medication question",
-        notes: "Brief call — no changes.",
-        priority: "low",
-        nextAction: "None",
-        ownerRole: "provider",
-        startedAt: new Date(Date.now() - 30 * 86400000).toISOString(),
-        endedAt: new Date(Date.now() - 30 * 86400000 + 10 * 60000).toISOString(),
-        createdAt: now,
-        updatedAt: now,
-      });
-    }
-
-    /* Occasional future appointment */
-    if (i % 2 === 0) {
-      await db.insert(schema.appointments).values({
-        id: `appt_${pid}_1`,
-        patientId: pid,
-        providerId: provId,
-        title: "Follow-up visit",
-        scheduledFor: new Date(
-          Date.now() + (24 + (i % 72)) * 3600000,
-        ).toISOString(),
-        status: "scheduled",
-        currentStage: "intake",
-        priority: "normal",
-        nextAction: "Check in",
-        ownerRole: "provider",
-        createdAt: now,
-        updatedAt: now,
-      });
-    }
-
-    const noteContent =
-      "Narrative H&P excerpt: patient reports adherence to medications. Social history reviewed.";
-    await db.insert(schema.clinicalNotes).values({
-      id: `note_${pid}_1`,
-      patientId: pid,
-      encounterId: `enc_${pid}_last`,
-      noteType: "progress",
-      content: noteContent,
-      authoredAt: new Date(Date.now() - 120 * 86400000).toISOString(),
-    });
-
-    await db.insert(schema.documentChunks).values({
-      id: `chunk_${pid}_1`,
-      patientId: pid,
-      noteId: `note_${pid}_1`,
-      chunkIndex: 0,
-      content: noteContent.slice(0, 200),
-    });
-  }
-
   sqlite.close();
-  console.log("EHR seed complete: 60 patients + reference data →", DB);
+  console.log(
+    "EHR seed complete: 2 demo patients (pat_seed_001, pat_seed_002) + reference data →",
+    DB,
+  );
 }
 
 main().catch((e) => {

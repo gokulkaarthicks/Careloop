@@ -4,35 +4,21 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { runRefillEligibilityAgent } from "@/lib/orchestration/refill-agent";
 import { CarePageHeader } from "@/components/care-loop/care-page-header";
 import { PanelCard } from "@/components/care-loop/panel-card";
+import { WorkflowStateCard } from "@/components/care-loop/workflow-state-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  useCareWorkflowStore,
-  type PatientSymptomCheckInPayload,
-} from "@/stores/care-workflow-store";
-import { cn } from "@/lib/utils";
+import { useCareWorkflowStore } from "@/stores/care-workflow-store";
 import {
   Bell,
   CalendarClock,
   Check,
   ClipboardList,
-  Heart,
-  PackageCheck,
+  Loader2,
+  MessageCircle,
   Pill,
   Sparkles,
-  Sunrise,
 } from "lucide-react";
-
-const SYMPTOM_TAGS = [
-  "Headache",
-  "Dizziness",
-  "Nausea",
-  "Short of breath",
-  "Feeling worried",
-  "Sleep changes",
-] as const;
 
 export default function PatientPage() {
   const snapshot = useCareWorkflowStore((s) => s.snapshot);
@@ -40,17 +26,8 @@ export default function PatientPage() {
   const markFollowUpTaskComplete = useCareWorkflowStore(
     (s) => s.markFollowUpTaskComplete,
   );
-  const patientConfirmMedicationPickedUp = useCareWorkflowStore(
-    (s) => s.patientConfirmMedicationPickedUp,
-  );
-  const patientLogMedicationTaken = useCareWorkflowStore(
-    (s) => s.patientLogMedicationTaken,
-  );
   const patientCompleteAdherenceCheck = useCareWorkflowStore(
     (s) => s.patientCompleteAdherenceCheck,
-  );
-  const patientSubmitSymptomCheckIn = useCareWorkflowStore(
-    (s) => s.patientSubmitSymptomCheckIn,
   );
 
   const patient = snapshot.patients.find((p) => p.id === patientId);
@@ -62,6 +39,9 @@ export default function PatientPage() {
   );
   const inbox = (snapshot.patientWorkflowNotifications ?? []).filter(
     (n) => n.patientId === patientId,
+  );
+  const latestEvent = (snapshot.workflowEngineEvents ?? []).find(
+    (e) => e.patientId === patientId,
   );
 
   const refillAgentForPatient = useRef<string | null>(null);
@@ -79,15 +59,28 @@ export default function PatientPage() {
   }, [snapshot.appointments, snapshot.patientFacingSummariesByAppointment, patientId]);
 
   const primaryRx = rxList[0];
-  const canConfirmPickup =
-    primaryRx?.status === "ready_for_pickup";
-  const pickupDone = primaryRx?.status === "picked_up";
 
-  const [overall, setOverall] =
-    useState<PatientSymptomCheckInPayload["overall"]>("same");
-  const [concerns, setConcerns] = useState<string[]>([]);
-  const [symptomNote, setSymptomNote] = useState("");
-  const [symptomSent, setSymptomSent] = useState(false);
+  const [assistQ, setAssistQ] = useState("");
+  const [assistReply, setAssistReply] = useState<string | null>(null);
+  const [assistLoading, setAssistLoading] = useState(false);
+  const [assistErr, setAssistErr] = useState<string | null>(null);
+
+  const clinicalForPatient =
+    patientId ? (snapshot.clinicalByPatientId[patientId] ?? null) : null;
+  const apptForPatient = snapshot.appointments.find(
+    (a) => a.patientId === patientId,
+  );
+  const prescriptionLinesFlat = rxList.flatMap((p) => p.lines);
+  const carePlan = patientId ? snapshot.carePlans[patientId] : undefined;
+  const treatmentPlanText = useMemo(() => {
+    if (carePlan) {
+      return `Goals: ${carePlan.goals.join("; ")}\nInterventions: ${carePlan.interventions.join("; ")}`;
+    }
+    if (visitSummary) {
+      return `${visitSummary.title}\n${visitSummary.bullets.join("\n")}`;
+    }
+    return "";
+  }, [carePlan, visitSummary]);
 
   const upcomingReminders = useMemo(() => {
     const rows: { id: string; when: string; label: string; kind: string }[] =
@@ -119,27 +112,51 @@ export default function PatientPage() {
     return [...careEvents].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 10);
   }, [careEvents]);
 
-  function toggleConcern(tag: string) {
-    setConcerns((prev) =>
-      prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag],
-    );
-  }
-
-  function submitSymptoms() {
-    patientSubmitSymptomCheckIn(patientId, {
-      overall,
-      concerns,
-      note: symptomNote.trim(),
-    });
-    setSymptomSent(true);
-    setSymptomNote("");
-    setConcerns([]);
-  }
-
   const firstName = patient?.displayName?.split(" ")[0] ?? "there";
 
+  async function submitPatientAssist() {
+    if (!assistQ.trim() || !patient || !patientId) return;
+    setAssistLoading(true);
+    setAssistErr(null);
+    try {
+      const res = await fetch("/api/ai/patient-assistant", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          patientId,
+          patientDisplayName: patient.displayName,
+          appointmentId: apptForPatient?.id ?? "patient-chat",
+          message: assistQ.trim(),
+          prescriptionLines: prescriptionLinesFlat,
+          clinical: clinicalForPatient,
+          treatmentPlan: treatmentPlanText,
+          priorAuthCases: snapshot.priorAuthCases.filter(
+            (c) => c.patientId === patientId,
+          ),
+          pharmacyId: patient.preferredPharmacyId ?? "",
+          insurancePlanId: patient.insurancePlanId,
+          preferredPharmacyId: patient.preferredPharmacyId,
+        }),
+      });
+      if (res.status === 503) {
+        setAssistErr(
+          "Assistant is unavailable in this demo (configure XAI_API_KEY on the server).",
+        );
+        return;
+      }
+      const data = (await res.json()) as { reply?: string; error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Request failed");
+      setAssistReply(data.reply ?? "");
+      setAssistQ("");
+    } catch (e) {
+      setAssistErr(e instanceof Error ? e.message : "Something went wrong.");
+    } finally {
+      setAssistLoading(false);
+    }
+  }
+
   return (
-    <div className="mx-auto flex w-full max-w-lg flex-col gap-8 pb-16 pt-1">
+    <div className="mx-auto flex w-full max-w-5xl flex-col gap-8 pb-16 pt-1">
       <CarePageHeader
         eyebrow="Patient"
         title={`Hi, ${firstName}`}
@@ -147,20 +164,41 @@ export default function PatientPage() {
         className="border-b-0 pb-2"
       />
 
-      <section className="rounded-xl border border-border/70 bg-card px-5 py-5 shadow-care-card">
-        <p className="text-label">This week</p>
-        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-          Pick up meds, log how you feel, and complete quick check-ins - same loop
-          your provider and pharmacy see.
-        </p>
-      </section>
+      {patient ?
+        <WorkflowStateCard
+          title="Your care loop status"
+          currentState={primaryRx ? `Medication: ${primaryRx.status.replaceAll("_", " ")}` : "No active prescription yet"}
+          nextAction={primaryRx?.nextAction ?? "Wait for provider/pharmacy updates"}
+          reason={
+            latestEvent?.reason ??
+            latestEvent?.detail ??
+            "Care Orchestrator follows medication, reminders, and check-ins until treatment is complete."
+          }
+        />
+      : null}
 
+      {!patientId && (
+        <PanelCard
+          title="Choose a member"
+          description="The shared demo store does not assume a default patient. Pick someone in the header to load medications and notifications for that person."
+        >
+          <p className="text-sm text-muted-foreground">
+            Provider / pharmacy / payer views use the same selection so you can follow
+            one cohort member end to end.
+          </p>
+        </PanelCard>
+      )}
+
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 md:items-stretch [&>*]:min-w-0">
       {inbox.length > 0 && (
-        <section className="space-y-2" aria-label="Updates">
+        <section
+          className="space-y-2 md:col-span-2"
+          aria-label="Updates"
+        >
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Updates for you
           </p>
-          <ul className="space-y-2">
+          <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {inbox.slice(0, 4).map((n) => (
               <li
                 key={n.id}
@@ -177,8 +215,51 @@ export default function PatientPage() {
         </section>
       )}
 
+      <PanelCard
+        fillHeight
+        title="Ask Care Orchestrator (demo)"
+        description="Plain-language help from your demo chart and meds — not a substitute for your clinician."
+      >
+        <div className="space-y-3">
+          <Textarea
+            value={assistQ}
+            onChange={(e) => setAssistQ(e.target.value)}
+            placeholder="e.g. Why might my pharmacy be waiting on my insurance?"
+            className="min-h-[88px] resize-none text-sm"
+            disabled={assistLoading || !patient}
+          />
+          <Button
+            type="button"
+            size="sm"
+            className="gap-2"
+            disabled={
+              assistLoading || !patient || !assistQ.trim() || assistQ.length > 4000
+            }
+            onClick={() => void submitPatientAssist()}
+          >
+            {assistLoading ?
+              <Loader2 className="size-4 animate-spin" />
+            : <MessageCircle className="size-4" />}
+            Get an answer
+          </Button>
+          {assistErr && (
+            <p className="text-xs text-destructive">{assistErr}</p>
+          )}
+          {assistReply && (
+            <div className="rounded-lg border border-border/80 bg-muted/20 px-3 py-3 text-sm leading-relaxed text-foreground">
+              {assistReply}
+            </div>
+          )}
+          <p className="text-[0.65rem] leading-relaxed text-muted-foreground">
+            Emergency? Call your local emergency number. This demo uses the same
+            bounded tool loop as the provider app with stricter safety prompts.
+          </p>
+        </div>
+      </PanelCard>
+
       {visitSummary && (
         <PanelCard
+          fillHeight
           title="Your visit, in plain words"
           description="A simple recap - your clinician’s note in the chart is the official record."
         >
@@ -211,8 +292,9 @@ export default function PatientPage() {
 
       {!visitSummary && (
         <PanelCard
+          fillHeight
           title="Your visit, in plain words"
-          description="After your clinician finishes your visit in CareLoop, a simple summary will show up here."
+          description="After your clinician finishes your visit in Care Orchestrator, a simple summary will show up here."
         >
           <p className="text-sm text-muted-foreground">
             Nothing yet - when your care team finalizes the visit, you’ll see the
@@ -222,6 +304,7 @@ export default function PatientPage() {
       )}
 
       <PanelCard
+        fillHeight
         title="Your medications"
         description="How to take what was prescribed - ask your pharmacist if you have questions."
       >
@@ -262,140 +345,9 @@ export default function PatientPage() {
       </PanelCard>
 
       <PanelCard
-        title="Quick actions"
-        description="Two taps your care team can see right away."
-      >
-        <div className="flex flex-col gap-3">
-          <Button
-            size="lg"
-            className="h-auto justify-start gap-3 py-4 text-left font-normal"
-            disabled={!primaryRx || !canConfirmPickup}
-            onClick={() => primaryRx && patientConfirmMedicationPickedUp(primaryRx.id)}
-          >
-            <PackageCheck className="size-6 shrink-0 text-primary" />
-            <span>
-              <span className="block font-semibold">I picked up my medication</span>
-              <span className="block text-xs font-normal text-muted-foreground">
-                {pickupDone
-                  ? "We already have pickup on file - you’re good."
-                  : canConfirmPickup
-                    ? "Tap when you have the bag from the pharmacy."
-                    : "We’ll turn this on when the pharmacy says your order is ready."}
-              </span>
-            </span>
-          </Button>
-          <Button
-            size="lg"
-            variant="secondary"
-            className="h-auto justify-start gap-3 py-4 text-left font-normal"
-            disabled={!patient}
-            onClick={() => patientLogMedicationTaken(patientId)}
-          >
-            <Sunrise className="size-6 shrink-0 text-amber-600" />
-            <span>
-              <span className="block font-semibold">I took my medication today</span>
-              <span className="block text-xs font-normal text-muted-foreground">
-                Helps your care team know you’re on track. Safe to tap once a day
-                in this demo.
-              </span>
-            </span>
-          </Button>
-        </div>
-      </PanelCard>
-
-      <PanelCard
-        title="How are you feeling?"
-        description="Optional - not a diagnosis. We’ll share this with your care team."
-      >
-        {symptomSent && (
-          <p className="mb-3 rounded-lg bg-teal-50 px-3 py-2 text-sm text-teal-900 dark:bg-teal-950/50 dark:text-teal-100">
-            Thanks - we sent that. You can send another update anytime.
-          </p>
-        )}
-        <div className="space-y-4">
-          <div>
-            <p className="text-xs font-medium text-muted-foreground">
-              Compared to your last few days
-            </p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {(
-                [
-                  ["better", "A bit better"],
-                  ["same", "About the same"],
-                  ["worse", "A bit worse"],
-                ] as const
-              ).map(([value, label]) => (
-                <Button
-                  key={value}
-                  type="button"
-                  size="sm"
-                  variant={overall === value ? "default" : "outline"}
-                  className="rounded-full"
-                  onClick={() => {
-                    setOverall(value);
-                    setSymptomSent(false);
-                  }}
-                >
-                  {label}
-                </Button>
-              ))}
-            </div>
-          </div>
-          <div>
-            <p className="text-xs font-medium text-muted-foreground">
-              Anything on your mind? (pick any)
-            </p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {SYMPTOM_TAGS.map((tag) => (
-                <button
-                  key={tag}
-                  type="button"
-                  onClick={() => {
-                    toggleConcern(tag);
-                    setSymptomSent(false);
-                  }}
-                  className={cn(
-                    "rounded-full border px-3 py-1.5 text-xs transition-colors",
-                    concerns.includes(tag)
-                      ? "border-primary bg-primary/10 text-foreground"
-                      : "border-border bg-background hover:bg-muted/60",
-                  )}
-                >
-                  {tag}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div>
-            <Label htmlFor="symptom-note" className="text-xs text-muted-foreground">
-              Anything else you want us to know?
-            </Label>
-            <Textarea
-              id="symptom-note"
-              className="mt-1.5 min-h-[88px] resize-none text-sm"
-              placeholder="Optional - a sentence or two is plenty."
-              value={symptomNote}
-              onChange={(e) => {
-                setSymptomNote(e.target.value);
-                setSymptomSent(false);
-              }}
-            />
-          </div>
-          <Button
-            type="button"
-            className="w-full sm:w-auto"
-            onClick={submitSymptoms}
-            disabled={!patient}
-          >
-            <Heart className="size-4" />
-            Send check-in
-          </Button>
-        </div>
-      </PanelCard>
-
-      <PanelCard
+        fillHeight
         title="Reminder timeline"
-        description="What’s coming up and what you’ve already done in CareLoop."
+        description="What’s coming up and what you’ve already done in Care Orchestrator."
       >
         <div className="space-y-5">
           <div>
@@ -457,6 +409,7 @@ export default function PatientPage() {
       </PanelCard>
 
       <PanelCard
+        fillHeight
         title="Follow-up from your care team"
         description="Small steps that keep everyone aligned."
       >
@@ -504,6 +457,7 @@ export default function PatientPage() {
       </PanelCard>
 
       <PanelCard
+        fillHeight
         title="Adherence check-ins"
         description="Quick nudges - not a grade. Tap when you’ve done the step."
       >
@@ -547,6 +501,7 @@ export default function PatientPage() {
           </ul>
         )}
       </PanelCard>
+      </div>
     </div>
   );
 }

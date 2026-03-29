@@ -3,6 +3,8 @@
 import { AgentActivityOverlay } from "@/components/care-loop/agent-activity-overlay";
 import { CareAppHeader } from "@/components/care-loop/care-app-header";
 import { CareAppSidebar } from "@/components/care-loop/care-app-sidebar";
+import { CentralOrchestratorRunner } from "@/components/care-loop/central-orchestrator-runner";
+import { JudgeDemoTourBar } from "@/components/care-loop/judge-demo-tour-bar";
 import { WorkflowEngineDock } from "@/components/care-loop/workflow-engine-dock";
 import { SidebarInset } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
@@ -26,6 +28,7 @@ export function CareAppShell({ children }: { children: React.ReactNode }) {
         <div className="shrink-0">
           <CareAppHeader />
         </div>
+        <JudgeDemoTourBar />
         <div
           className={cn(
             "flex min-h-0 w-full min-w-0 flex-1 flex-col gap-6 p-4 pb-40 md:p-6 md:pb-40 lg:px-8 lg:pb-40 lg:pt-6",
@@ -37,6 +40,7 @@ export function CareAppShell({ children }: { children: React.ReactNode }) {
       </SidebarInset>
       <WorkflowEngineDock />
       <AgentActivityOverlay />
+      <CentralOrchestratorRunner />
     </>
   );
 }

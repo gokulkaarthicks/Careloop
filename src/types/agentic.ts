@@ -2,7 +2,19 @@
  * Agentic encounter workflow — overlay + pipeline types (hackathon demo).
  */
 
+import type { CoverageEvaluationResult, PriorAuthCase } from "@/types/benefits";
+import type { PatientClinicalSummary, PrescriptionLine } from "@/types/workflow";
+
 export type AgentActivityStatus = "idle" | "running" | "success" | "error";
+
+/** One row from the encounter tool loop (demo trace). */
+export type ToolTraceEntry = {
+  tool: string;
+  args: Record<string, unknown>;
+  ok: boolean;
+  detail?: string;
+  error?: string;
+};
 
 export type AgentActivityState = {
   visible: boolean;
@@ -13,6 +25,8 @@ export type AgentActivityState = {
   subline: string;
   /** Steps finished (for success summary) */
   completedStepLabels: string[];
+  /** Tool loop trace from finalize (when available) */
+  toolTrace?: ToolTraceEntry[];
   errorMessage?: string;
 };
 
@@ -22,6 +36,7 @@ export const initialAgentActivity: AgentActivityState = {
   headline: "",
   subline: "",
   completedStepLabels: [],
+  toolTrace: [],
 };
 
 export type AgentPipelineStep = {
@@ -39,9 +54,6 @@ export type PaLineDecision = {
   copayHigh?: boolean;
 };
 
-import type { CoverageEvaluationResult } from "@/types/benefits";
-import type { PatientClinicalSummary, PrescriptionLine } from "@/types/workflow";
-
 export type RunPipelineInput = {
   patientDisplayName: string;
   patientId: string;
@@ -52,6 +64,8 @@ export type RunPipelineInput = {
   pharmacyId: string;
   insurancePlanId?: string;
   preferredPharmacyId?: string;
+  /** Demo store PA rows for this patient — feeds get_pa_case */
+  priorAuthCases?: PriorAuthCase[];
 };
 
 export type AgenticEncounterResult = {
@@ -61,4 +75,49 @@ export type AgenticEncounterResult = {
   coverage: CoverageEvaluationResult;
   timelineEntries: { title: string; detail: string }[];
   patientNotification?: { title: string; body: string };
+  /** Multi-turn tool loop (pre-coverage) when API succeeded */
+  toolLoopTrace?: ToolTraceEntry[];
+  /** Optional model summary after tools */
+  toolLoopNarrative?: string;
 };
+
+/** Persisted proof bundle for one agentic finalize — keyed by appointment in `CareLoopSnapshot`. */
+export type EncounterAgentOutcome =
+  | "pharmacy_e_rx"
+  | "prior_auth_hold"
+  | "step_therapy_hold";
+
+export interface EncounterAgentRun {
+  runId: string;
+  appointmentId: string;
+  patientId: string;
+  prescriptionId?: string;
+  encounterId?: string;
+  finishedAt: string;
+  coveragePlanName: string;
+  outcomeLabel: EncounterAgentOutcome;
+  tools: ToolTraceEntry[];
+  routingSummary: PaLineDecision[];
+  soapAddendum: string;
+  timelineEntryTitles: string[];
+}
+
+/** Passed into finalizeEncounter; store sets finishedAt, encounterId, prescriptionId. */
+export type EncounterAgentRunInput = Omit<
+  EncounterAgentRun,
+  "finishedAt" | "encounterId" | "prescriptionId"
+> &
+  Partial<Pick<EncounterAgentRun, "prescriptionId">>;
+
+export function outcomeLabelFromCoverage(args: {
+  holdForPriorAuth: boolean;
+  anyStepTherapyBlock: boolean;
+}): EncounterAgentOutcome {
+  if (args.anyStepTherapyBlock) return "step_therapy_hold";
+  if (args.holdForPriorAuth) return "prior_auth_hold";
+  return "pharmacy_e_rx";
+}
+
+export function newEncounterRunId(): string {
+  return `car_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}

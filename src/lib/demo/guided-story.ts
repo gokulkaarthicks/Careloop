@@ -156,7 +156,7 @@ export async function advanceGuidedStoryStep(): Promise<
             patientId: route.patientId,
             createdAt: ts(),
             title: "Your visit summary is ready",
-            body: "Tap CareLoop for medication instructions and next steps from today’s visit.",
+            body: "Tap Care Orchestrator for medication instructions and next steps from today’s visit.",
             source: "care_team",
           });
           return { snapshot: snap };

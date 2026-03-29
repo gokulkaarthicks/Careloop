@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { CarePageHeader } from "@/components/care-loop/care-page-header";
 import { PanelCard } from "@/components/care-loop/panel-card";
 import { Badge } from "@/components/ui/badge";
@@ -15,8 +16,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { WorkflowRoleFeed } from "@/components/care-loop/workflow-role-feed";
 import { useCareWorkflowStore } from "@/stores/care-workflow-store";
+import type { WorkflowEngineEvent } from "@/types/benefits";
 import type { PharmacyOrderStatus, PrescriptionStatus } from "@/types/workflow";
+
+const EMPTY_ENGINE_EVENTS: WorkflowEngineEvent[] = [];
 import { cn } from "@/lib/utils";
 import {
   Building2,
@@ -75,6 +80,7 @@ export default function PharmacyPage() {
 
   const timeline = snapshot.workflowTimeline ?? [];
   const patientNotifications = snapshot.patientWorkflowNotifications ?? [];
+  const engineEvents = snapshot.workflowEngineEvents ?? EMPTY_ENGINE_EVENTS;
 
   const rows = useMemo(() => {
     const list = snapshot.prescriptions.map((rx) => {
@@ -106,7 +112,10 @@ export default function PharmacyPage() {
   const rx = selected?.rx;
   const patient = selected?.patient;
   const order = selected?.order;
-
+  const agentRunForRx =
+    rx?.appointmentId ?
+      snapshot.encounterAgentRunsByAppointment[rx.appointmentId]
+    : undefined;
   const canMarkReady =
     rx &&
     (rx.status === "received_by_pharmacy" || rx.status === "sent") &&
@@ -160,6 +169,20 @@ export default function PharmacyPage() {
           </span>
         </div>
       </CarePageHeader>
+
+      <WorkflowRoleFeed events={engineEvents} variant="pharmacy" />
+
+      {queueIncoming.some((r) => r.rx.status === "pending_prior_auth") && (
+        <div className="rounded-lg border border-amber-200/80 bg-amber-50/90 px-3 py-2.5 text-xs leading-relaxed text-amber-950 dark:border-amber-900/40 dark:bg-amber-950/25 dark:text-amber-50">
+          <strong className="font-semibold">Prior authorization required:</strong> at least one
+          prescription is held for payer review. Open the{" "}
+          <Link href="/payer" className="font-medium text-primary underline underline-offset-2">
+            Payer
+          </Link>{" "}
+          screen and use <strong>Prior authorization queue</strong> (Approve / Deny / More info).
+          When PA clears, the Rx will show as receivable here.
+        </div>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-12">
         <div className="space-y-4 lg:col-span-5">
@@ -291,6 +314,11 @@ export default function PharmacyPage() {
                       {order.externalFulfillmentId}
                     </code>
                   )}
+                  {agentRunForRx ?
+                    <Badge variant="outline" className="font-mono text-[0.6rem] font-normal" title={agentRunForRx.runId}>
+                      Run …{agentRunForRx.runId.slice(-12)}
+                    </Badge>
+                  : null}
                 </div>
 
                 <div className="grid gap-4 md:grid-cols-2">
@@ -415,7 +443,7 @@ export default function PharmacyPage() {
 
               <PanelCard
                 title="Workflow & payer sync"
-                description="CareLoop updates the patient app, payer closure score, and provider timeline when you confirm pickup."
+                description="Care Orchestrator updates the patient app, payer closure score, and provider timeline when you confirm pickup."
               >
                 <ul className="space-y-2 text-xs text-muted-foreground">
                   <li className="flex gap-2">

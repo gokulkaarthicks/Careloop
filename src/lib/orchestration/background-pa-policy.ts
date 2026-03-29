@@ -64,88 +64,122 @@ export async function runBackgroundPaPolicyResolution(patientId: UUID): Promise<
     })
   : "{}";
 
-  const body: PaAdjudicateApiBody = {
-    patientDisplayName: patient.displayName,
-    planName: plan.name,
-    planCode: plan.planCode,
-    planDocumentationNotes: plan.documentationNotes,
-    drugLines: pending.map((c) => ({
-      drugName: c.drugName,
-      lineIndex: c.lineIndex,
-      caseId: c.id,
-    })),
-    clinicalSummaryJson,
-  };
-
-  let finalPolicy: PolicyPaResolution;
-  let adjudicationNotes: string | undefined;
-  let nextWorkflowSteps: string[] | undefined;
-
-  try {
-    const res = await fetch("/api/ai/pa-adjudicate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const data = (await res.json().catch(() => ({}))) as {
-      error?: string;
-      decision?: PolicyPaResolution;
-      adjudicationNotes?: string;
-      nextWorkflowSteps?: string[];
-    };
-    if (!res.ok) {
-      throw new Error(data.error ?? `PA adjudicate HTTP ${res.status}`);
-    }
-    if (!data.decision) {
-      throw new Error("PA adjudicate: missing decision");
-    }
-    finalPolicy = data.decision;
-    adjudicationNotes = data.adjudicationNotes;
-    nextWorkflowSteps = data.nextWorkflowSteps;
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : "PA adjudication failed";
-    store.pushWorkflowEngineEvent({
-      kind: "background_pa_policy_completed",
-      title: "Payer policy agent — error",
-      detail: msg,
-      patientId,
-      prescriptionId: pending[0]?.prescriptionId,
-      role: "payer",
-    });
-    return;
-  }
-
-  if (finalPolicy === "manual_queue") {
-    store.pushWorkflowEngineEvent({
-      kind: "background_pa_policy_completed",
-      title: "PA left in payer manual queue",
-      detail:
-        [adjudicationNotes, ...(nextWorkflowSteps ?? [])].filter(Boolean).join(" · ") ||
-        "Agent routed to manual review queue.",
-      patientId,
-      prescriptionId: pending[0]?.prescriptionId,
-      role: "payer",
-    });
-    return;
-  }
-
-  const resolution =
-    finalPolicy === "approved" ? "approved"
-    : finalPolicy === "denied" ? "denied"
-    : "more_info";
-
+  const results: string[] = [];
   for (const c of pending) {
+    const body: PaAdjudicateApiBody = {
+      patientDisplayName: patient.displayName,
+      planName: plan.name,
+      planCode: plan.planCode,
+      planDocumentationNotes: plan.documentationNotes,
+      drugLines: [{ drugName: c.drugName, lineIndex: c.lineIndex, caseId: c.id }],
+      clinicalSummaryJson,
+    };
+
+    let finalPolicy: PolicyPaResolution;
+    let adjudicationNotes: string | undefined;
+    let nextWorkflowSteps: string[] | undefined;
+
+    try {
+      const res = await fetch("/api/ai/pa-adjudicate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        decision?: PolicyPaResolution;
+        adjudicationNotes?: string;
+        nextWorkflowSteps?: string[];
+      };
+      if (!res.ok) {
+        throw new Error(data.error ?? `PA adjudicate HTTP ${res.status}`);
+      }
+      if (!data.decision) {
+        throw new Error("PA adjudicate: missing decision");
+      }
+      finalPolicy = data.decision;
+      adjudicationNotes = data.adjudicationNotes;
+      nextWorkflowSteps = data.nextWorkflowSteps;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "PA adjudication failed";
+      store.pushWorkflowEngineEvent({
+        kind: "background_pa_policy_completed",
+        title: "Payer policy agent — error",
+        detail: `${c.drugName}: ${msg}`,
+        trigger: "Background PA adjudication call",
+        decision: "Error",
+        action: "Leave PA case pending",
+        result: "Manual payer review required",
+        reason: msg,
+        patientId,
+        prescriptionId: c.prescriptionId,
+        role: "payer",
+      });
+      continue;
+    }
+
+    if (finalPolicy === "manual_queue") {
+      store.pushWorkflowEngineEvent({
+        kind: "background_pa_policy_completed",
+        title: "PA left in payer manual queue",
+        detail:
+          [c.drugName, adjudicationNotes, ...(nextWorkflowSteps ?? [])]
+            .filter(Boolean)
+            .join(" · ") || "Agent routed to manual review queue.",
+        trigger: "Background PA adjudication call",
+        decision: "Manual queue",
+        action: "Keep case in payer queue",
+        result: "No automatic resolution applied",
+        reason: adjudicationNotes,
+        patientId,
+        prescriptionId: c.prescriptionId,
+        role: "payer",
+      });
+      continue;
+    }
+
+    const resolution =
+      finalPolicy === "approved" ? "approved"
+      : finalPolicy === "denied" ? "denied"
+      : "more_info";
+
     store.resolvePriorAuthCase(c.id, resolution);
+    results.push(`${c.drugName}: ${resolution}`);
+    store.pushWorkflowEngineEvent({
+      kind: "background_pa_policy_completed",
+      title: `Payer policy agent — ${resolution}`,
+      detail:
+        [c.drugName, adjudicationNotes, ...(nextWorkflowSteps ?? []).slice(0, 2)]
+          .filter(Boolean)
+          .join(" · ") || "Case processed by payer adjudication agent.",
+      trigger: "Background PA adjudication call",
+      decision: resolution.replace("_", " "),
+      action: "Apply case resolution to workflow state",
+      result:
+        resolution === "approved" ?
+          "Medication can proceed to pharmacy"
+        : resolution === "denied" ?
+          "Provider must choose alternative or appeal"
+        : "Provider documentation requested",
+      reason: adjudicationNotes,
+      patientId,
+      prescriptionId: c.prescriptionId,
+      role: "payer",
+    });
   }
 
-  store.pushWorkflowEngineEvent({
-    kind: "background_pa_policy_completed",
-    title: `Payer policy agent — ${resolution}`,
-    detail:
-      [adjudicationNotes, ...(nextWorkflowSteps ?? []).slice(0, 3)].filter(Boolean).join(" · ") ||
-      "Case processed by payer adjudication agent.",
-    patientId,
-    prescriptionId: pending[0]?.prescriptionId,
-    role: "payer",
-  });
+  if (results.length > 1) {
+    store.pushWorkflowEngineEvent({
+      kind: "background_pa_policy_completed",
+      title: "Payer policy batch complete",
+      detail: results.join(" · "),
+      trigger: "Processed all pending PA cases for patient",
+      decision: "Per-case adjudication",
+      action: "Applied individual resolutions",
+      result: "PA queue updated with mixed outcomes",
+      patientId,
+      prescriptionId: pending[0]?.prescriptionId,
+      role: "payer",
+    });
+  }
 }

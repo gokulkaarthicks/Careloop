@@ -55,7 +55,7 @@ export function ProviderAiCopilotPanel({
             </span>
             <div>
               <CardTitle className="text-base font-semibold tracking-tight">
-                CareLoop Copilot
+                Care Orchestrator Copilot
               </CardTitle>
               <p className="text-xs text-muted-foreground">
                 Pre-visit intelligence · not a chatbot

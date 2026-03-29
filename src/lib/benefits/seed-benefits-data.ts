@@ -20,6 +20,16 @@ export const SEED_PAYER_PLANS: InsurancePlan[] = [
     highCopayThresholdUsd: 50,
     documentationNotes: "Narrow network; out-of-area retail may require transition to preferred pharmacy.",
   },
+  {
+    id: "plan_ppo_horizon_003",
+    payerId: "payer_seed_002",
+    name: "Horizon Select PPO",
+    planCode: "HZ-PPO-PLUS",
+    paTurnaroundBusinessDays: 2,
+    highCopayThresholdUsd: 90,
+    documentationNotes:
+      "Specialty biologics require PA; preferred alternatives can bypass review when criteria met.",
+  },
 ];
 
 /**

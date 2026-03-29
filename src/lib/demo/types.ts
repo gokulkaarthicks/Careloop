@@ -29,6 +29,10 @@ export interface JudgeDemoState {
   status: "idle" | "running" | "complete" | "error";
   currentStepIndex: number;
   steps: JudgeDemoStep[];
+  activePortal?: "dashboard" | "provider" | "pharmacy" | "patient" | "payer";
+  inputFocus?: string;
+  expectedUpdate?: string;
+  lastResult?: string;
   beforeMetrics: DemoMetrics | null;
   afterMetrics: DemoMetrics | null;
   errorMessage?: string;

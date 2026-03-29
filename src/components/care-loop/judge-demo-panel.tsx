@@ -3,6 +3,7 @@
 import { runJudgeDemo } from "@/lib/demo/run-judge-demo";
 import { cn } from "@/lib/utils";
 import { useCareWorkflowStore } from "@/stores/care-workflow-store";
+import { useRouter } from "next/navigation";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -38,6 +39,7 @@ function MetricLine({
 }
 
 export function JudgeDemoPanel() {
+  const router = useRouter();
   const judge = useCareWorkflowStore((s) => s.judgeDemo);
   const resetJudgeDemo = useCareWorkflowStore((s) => s.resetJudgeDemo);
 
@@ -61,9 +63,9 @@ export function JudgeDemoPanel() {
             </span>
             <div>
               <p className="text-label">Pitch demo</p>
-              <h2 className="text-sm font-semibold tracking-tight">Full encounter run</h2>
+              <h2 className="text-sm font-semibold tracking-tight">Full end-to-end orchestration run</h2>
               <p className="text-[0.7rem] text-muted-foreground">
-                One click · ~20s · synced across portals
+                One click · multi-portal flow · time-jumps · recovery + appeal chain
               </p>
             </div>
           </div>
@@ -73,14 +75,18 @@ export function JudgeDemoPanel() {
               size="sm"
               className="gap-1.5 shadow-sm"
               disabled={running}
-              onClick={() => runJudgeDemo()}
+              onClick={() =>
+                void runJudgeDemo({
+                  navigate: (path) => router.push(path),
+                })
+              }
             >
               {running ? (
                 <Loader2 className="size-4 animate-spin" />
               ) : (
                 <Sparkles className="size-4" />
               )}
-              Run full encounter
+              Run full pitch demo
             </Button>
             <Button
               type="button"
@@ -99,6 +105,29 @@ export function JudgeDemoPanel() {
         <div>
           <p className="text-label mb-2">Live steps</p>
           <Progress value={pct} className="mb-3 h-2" />
+          {running && (judge.inputFocus || judge.expectedUpdate || judge.lastResult) ? (
+            <div className="mb-3 rounded-lg border border-border/60 bg-card p-2 text-[0.72rem]">
+              <p className="font-medium text-foreground">
+                Viewing: {(judge.activePortal ?? "dashboard").replaceAll("_", " ")}
+              </p>
+              {judge.inputFocus ? (
+                <p className="mt-1 text-muted-foreground">
+                  <span className="font-medium text-foreground">Input:</span> {judge.inputFocus}
+                </p>
+              ) : null}
+              {judge.expectedUpdate ? (
+                <p className="mt-1 text-muted-foreground">
+                  <span className="font-medium text-foreground">Expected update:</span>{" "}
+                  {judge.expectedUpdate}
+                </p>
+              ) : null}
+              {judge.lastResult ? (
+                <p className="mt-1 text-muted-foreground">
+                  <span className="font-medium text-foreground">Result:</span> {judge.lastResult}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
           <ol className="space-y-1.5">
             {judge.steps.map((s, i) => (
               <li
@@ -125,7 +154,7 @@ export function JudgeDemoPanel() {
         </div>
 
         <div>
-          <p className="text-label mb-2">Before → after · Jordan Ellis</p>
+          <p className="text-label mb-2">Before → after · Thaddeus Wainwright</p>
           {b && a ? (
             <div className="space-y-2 rounded-lg border border-border/70 bg-card p-3 shadow-sm">
               <div className="mb-2 grid grid-cols-[1fr_auto_auto] gap-2 text-[0.6rem] font-semibold uppercase tracking-wide text-muted-foreground">

@@ -136,7 +136,15 @@ export type WorkflowEngineEventKind =
   | "background_pa_policy_started"
   | "background_pa_policy_completed"
   | "refill_eligibility_evaluated"
-  | "orchestrator_tick";
+  | "orchestrator_tick"
+  | "encounter_agent_trace"
+  | "recovery_case_opened"
+  | "recovery_plan_created"
+  | "appeal_generated"
+  | "appeal_submitted"
+  | "appeal_status_updated"
+  | "recovery_escalated"
+  | "recovery_closed";
 
 export interface WorkflowEngineEvent {
   id: UUID;
@@ -144,7 +152,23 @@ export interface WorkflowEngineEvent {
   kind: WorkflowEngineEventKind;
   title: string;
   detail?: string;
+  /** Why this event happened (plain language). */
+  trigger?: string;
+  /** What branch was selected. */
+  decision?: string;
+  /** Action taken by the workflow engine. */
+  action?: string;
+  /** Visible outcome after the action. */
+  result?: string;
+  /** Optional policy/clinical rationale text. */
+  reason?: string;
   patientId?: UUID;
   prescriptionId?: UUID;
-  role?: "provider" | "payer" | "pharmacy" | "patient" | "system";
+  role?:
+    | "provider"
+    | "payer"
+    | "pharmacy"
+    | "patient"
+    | "care_coordinator"
+    | "system";
 }

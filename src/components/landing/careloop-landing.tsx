@@ -8,6 +8,7 @@ import {
   Activity,
   ArrowRight,
   BarChart3,
+  ChevronRight,
   Heart,
   Pill,
   ShieldCheck,
@@ -57,41 +58,53 @@ function WorkflowIllustration({ className }: { className?: string }) {
     { label: "Payer", sub: "closure", Icon: BarChart3 },
   ];
 
+  const flowPeriodSec = 3.9;
+  const n = steps.length;
+
   return (
     <div
       className={cn(
-        "w-full rounded-xl border border-border/70 bg-gradient-to-b from-muted/40 to-card px-2 py-3 shadow-care-card sm:px-4 sm:py-4",
+        "mx-auto w-fit max-w-full rounded-xl border border-border/70 bg-gradient-to-b from-muted/40 to-card px-3 py-2 shadow-care-card motion-reduce:animate-none motion-reduce:opacity-100 motion-reduce:translate-y-0 sm:px-4 sm:py-2.5",
+        "animate-landing-fade-up opacity-0",
         className,
       )}
     >
-      <p className="text-label mb-2 text-center text-[0.6rem] sm:mb-3 sm:text-[0.65rem]">
+      <p className="text-label mb-1.5 text-center text-[0.6rem] sm:mb-2 sm:text-[0.65rem]">
         How it flows - one loop, shared state
       </p>
-      <div className="flex flex-wrap items-center justify-center gap-x-0 gap-y-3 px-1 sm:flex-nowrap sm:gap-y-0 sm:px-2">
+      <div className="flex flex-nowrap items-center justify-center gap-0 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] sm:gap-0.5 [&::-webkit-scrollbar]:hidden">
         {steps.map((s, i) => (
           <Fragment key={s.label}>
-            <div className="flex w-[4.25rem] shrink-0 flex-col items-center text-center sm:w-[4.75rem] md:w-auto md:min-w-[4.5rem]">
-              <span className="flex size-9 items-center justify-center rounded-lg border border-border/80 bg-card shadow-sm sm:size-10 md:size-11">
-                <s.Icon className="size-4 text-primary md:size-[1.15rem]" aria-hidden />
+            <div
+              className={cn(
+                "flex w-[4.25rem] shrink-0 flex-col items-center text-center motion-reduce:animate-none sm:w-[4.5rem] md:min-w-[4.25rem]",
+                "animate-landing-flow-node",
+              )}
+              style={{
+                animationDelay: `${(i * flowPeriodSec) / n}s`,
+              }}
+            >
+              <span className="flex size-9 items-center justify-center rounded-lg border border-border/80 bg-card shadow-sm sm:size-10">
+                <s.Icon className="size-4 text-primary sm:size-[1.05rem]" aria-hidden />
               </span>
-              <span className="mt-1.5 text-[0.65rem] font-semibold leading-tight text-foreground sm:text-[0.7rem]">
+              <span className="mt-1 text-[0.65rem] font-semibold leading-tight text-foreground sm:text-[0.7rem]">
                 {s.label}
               </span>
               <span className="text-[0.55rem] text-muted-foreground sm:text-[0.6rem]">{s.sub}</span>
             </div>
             {i < steps.length - 1 && (
-              <div
-                className="hidden h-px w-2 shrink-0 bg-gradient-to-r from-transparent via-primary/30 to-transparent sm:block sm:min-w-[6px] md:min-w-3"
+              <ChevronRight
+                className="mx-0.5 size-4 shrink-0 self-center animate-landing-flow-arrow text-primary motion-reduce:animate-none sm:mx-1 sm:size-[1.125rem]"
+                strokeWidth={2.25}
                 aria-hidden
+                style={{
+                  animationDelay: `${((i + 0.5) * flowPeriodSec) / n}s`,
+                }}
               />
             )}
           </Fragment>
         ))}
       </div>
-      <p className="mx-auto mt-2 max-w-lg px-1 text-center text-[0.6rem] leading-snug text-muted-foreground sm:mt-3 sm:text-[0.65rem] md:text-xs">
-        Not five separate tools - one demo where provider, patient, pharmacy, and payer screens all
-        update together.
-      </p>
     </div>
   );
 }
@@ -111,80 +124,84 @@ export function CareLoopLanding() {
 
   return (
     <div className="care-canvas flex h-[100dvh] w-full min-h-0 flex-col overflow-hidden">
-      <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col px-4 py-4 sm:px-6 sm:py-5 md:px-8">
-        <header className="shrink-0 text-center">
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/8 px-3 py-1 text-[0.65rem] font-medium text-primary sm:text-xs">
-            Built for Value-Based Care (VBC)
-          </span>
-          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl md:text-[2.75rem] md:leading-tight">
-            CareLoop AI
-          </h1>
-          <p className="mx-auto mt-2 max-w-2xl px-1 text-sm font-medium leading-snug text-foreground sm:mt-3 sm:text-base md:text-lg">
-            Connect prep, prescribing, fulfillment, and proof-in one live system instead of four
-            disconnected tools.
-          </p>
-          <div className="mt-4 flex flex-wrap items-center justify-center gap-2 sm:mt-5 sm:gap-3">
-            <Link
-              href="/dashboard"
-              className={cn(
-                "inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-primary px-6 text-sm font-medium text-primary-foreground shadow-care-card transition-colors sm:h-10 sm:px-8 sm:text-base",
-                "hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              )}
-            >
-              Run Demo
-              <ArrowRight className="size-4" aria-hidden />
-            </Link>
-            <Link
-              href="/provider"
-              className={cn(
-                "inline-flex h-9 items-center justify-center rounded-lg border border-border bg-background px-4 text-sm font-medium transition-colors sm:h-10 sm:px-5 sm:text-base",
-                "hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              )}
-            >
-              Open provider view
-            </Link>
-          </div>
-        </header>
+      <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col px-4 py-3 sm:px-6 sm:py-4 md:px-8">
+        {/* Single vertically centered column: no flex-1 dead zone below the cards */}
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 sm:gap-4 md:gap-5">
+          <header className="w-full shrink-0 text-center">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/8 px-3 py-1 text-[0.65rem] font-medium text-primary sm:text-xs">
+              Built for Value-Based Care (VBC)
+            </span>
+            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl md:text-[2.75rem] md:leading-tight">
+              Care Orchestrator
+            </h1>
+            <p className="mx-auto mt-2 max-w-2xl px-1 text-sm font-medium leading-snug text-foreground sm:mt-3 sm:text-base md:text-lg">
+              Connect prep, prescribing, fulfillment, and proof-in one live system instead of four
+              disconnected tools.
+            </p>
+            <div className="mt-3 flex flex-wrap items-center justify-center gap-2 sm:mt-4 sm:gap-3">
+              <Link
+                href="/dashboard"
+                className={cn(
+                  "inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-primary px-6 text-sm font-medium text-primary-foreground shadow-care-card transition-colors sm:h-10 sm:px-8 sm:text-base",
+                  "hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                )}
+              >
+                Check flow
+                <ArrowRight className="size-4" aria-hidden />
+              </Link>
+            </div>
+          </header>
 
-        <section className="mt-4 min-h-0 shrink-0 sm:mt-5 md:mt-6">
-          <WorkflowIllustration />
-        </section>
+          <section className="flex w-full shrink-0 justify-center">
+            <WorkflowIllustration />
+          </section>
 
-        <section className="mt-3 flex min-h-0 flex-1 flex-col justify-center sm:mt-4">
-          <h2 className="text-center text-xs font-semibold text-foreground sm:text-sm md:text-base">
-            Why it matters
-          </h2>
-          <p className="mx-auto mt-0.5 max-w-lg text-center text-[0.65rem] text-muted-foreground sm:text-xs">
-            One platform. Every stakeholder gets exactly what they need.
-          </p>
-          <ul className="mt-2 grid min-h-0 flex-1 grid-cols-2 gap-2 sm:mt-3 sm:grid-cols-4 sm:gap-3 md:gap-4">
-            {personas.map(({ role, icon: Icon, headline, body, accent }) => (
-              <li key={role} className="min-h-0">
-                <Card className="h-full border-border/80 shadow-care-card">
-                  <CardContent className="flex h-full flex-col gap-2 p-3 pt-4 sm:p-4 sm:pt-5">
-                    <div className="flex items-center gap-2">
-                      <span className={`flex size-8 shrink-0 items-center justify-center rounded-lg sm:size-9 ${accent}`}>
-                        <Icon className="size-4 sm:size-[1.1rem]" aria-hidden />
-                      </span>
-                      <p className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground sm:text-[0.7rem]">
-                        {role}
+          <section className="w-full max-w-4xl shrink-0">
+            <h2 className="text-center text-xs font-semibold text-foreground sm:text-sm md:text-base">
+              Why it matters
+            </h2>
+            <p className="mx-auto mt-0.5 max-w-lg text-center text-xs text-muted-foreground sm:text-sm">
+              One platform. Every stakeholder gets exactly what they need.
+            </p>
+            {/* items-start + content-start keeps each cell exactly aspect-square (no stretched rows) */}
+            <ul className="mt-2 grid w-full grid-cols-2 content-start items-start justify-items-stretch gap-2 sm:mt-3 sm:grid-cols-4 sm:gap-3">
+              {personas.map(({ role, icon: Icon, headline, body, accent }, idx) => (
+                <li
+                  key={role}
+                  className={cn(
+                    "aspect-square min-h-0 min-w-0 motion-reduce:animate-none motion-reduce:opacity-100 motion-reduce:translate-y-0",
+                    "animate-landing-fade-up opacity-0",
+                  )}
+                  style={{ animationDelay: `${380 + idx * 75}ms` }}
+                >
+                  <Card className="flex h-full min-h-0 flex-col overflow-hidden border-border/80 shadow-care-card">
+                    <CardContent className="flex h-full min-h-0 flex-col gap-1 p-2 pt-2.5 sm:gap-1.5 sm:p-2.5 sm:pt-3">
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        <span
+                          className={`flex size-6 shrink-0 items-center justify-center rounded-md sm:size-7 ${accent}`}
+                        >
+                          <Icon className="size-3 sm:size-3.5" aria-hidden />
+                        </span>
+                        <p className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground sm:text-xs">
+                          {role}
+                        </p>
+                      </div>
+                      <h3 className="shrink-0 text-xs font-semibold leading-snug text-foreground sm:text-[0.8125rem]">
+                        {headline}
+                      </h3>
+                      <p className="min-h-0 flex-1 overflow-y-auto text-[0.7rem] leading-snug text-muted-foreground sm:text-xs">
+                        {body}
                       </p>
-                    </div>
-                    <h3 className="text-xs font-semibold leading-snug text-foreground sm:text-sm">
-                      {headline}
-                    </h3>
-                    <p className="line-clamp-4 text-[0.65rem] leading-relaxed text-muted-foreground sm:line-clamp-none sm:text-xs">
-                      {body}
-                    </p>
-                  </CardContent>
-                </Card>
-              </li>
-            ))}
-          </ul>
-        </section>
+                    </CardContent>
+                  </Card>
+                </li>
+              ))}
+            </ul>
+          </section>
+        </div>
 
-        <footer className="shrink-0 pt-2 text-center text-[0.6rem] text-muted-foreground sm:pt-3 sm:text-[0.65rem]">
-          CareLoop AI · closed-loop care workflow demo
+        <footer className="shrink-0 pb-1 pt-1 text-center text-[0.6rem] text-muted-foreground sm:text-[0.65rem]">
+          Care Orchestrator · closed-loop care workflow demo
         </footer>
       </div>
     </div>

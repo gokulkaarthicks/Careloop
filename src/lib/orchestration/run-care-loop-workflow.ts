@@ -2,10 +2,17 @@
 
 import { buildPreVisitAgentInput } from "@/lib/agents/pre-visit-agent";
 import { fetchPreVisitOutput } from "@/lib/agents/pre-visit-fetch";
+import { runAgenticEncounterPipeline } from "@/lib/agentic/encounter-pipeline";
+import { runBackgroundPaPolicyResolution } from "@/lib/orchestration/background-pa-policy";
 import { buildOrchestrationSteps } from "@/lib/orchestration/step-definitions";
 import { SEED } from "@/lib/seed-data";
 import { useCareWorkflowStore } from "@/stores/care-workflow-store";
-import type { PrescriptionLine, UUID } from "@/types/workflow";
+import { newEncounterRunId, outcomeLabelFromCoverage } from "@/types/agentic";
+import {
+  type ChartInferenceReview,
+  type PrescriptionLine,
+  type UUID,
+} from "@/types/workflow";
 import type { PreVisitAgentOutput } from "@/types/pre-visit-agent";
 
 export type RunCareLoopWorkflowInput = {
@@ -155,15 +162,99 @@ export async function runCareLoopWorkflow(
           if (!input.prescriptionLines.length) {
             throw new Error("Add at least one medication line before running the workflow.");
           }
+
+          const patient =
+            useCareWorkflowStore
+              .getState()
+              .snapshot.patients.find((p) => p.id === input.patientId) ?? null;
+          const priorAuthCases = useCareWorkflowStore
+            .getState()
+            .snapshot.priorAuthCases.filter((c) => c.patientId === input.patientId);
+
+          let pipeline: Awaited<ReturnType<typeof runAgenticEncounterPipeline>> | null =
+            null;
+          try {
+            pipeline = await runAgenticEncounterPipeline(
+              {
+                patientDisplayName: patient?.displayName ?? "Patient",
+                patientId: input.patientId,
+                appointmentId: input.appointmentId,
+                clinical:
+                  useCareWorkflowStore.getState().snapshot.clinicalByPatientId[
+                    input.patientId
+                  ] ?? null,
+                prescriptionLines: input.prescriptionLines,
+                treatmentPlan: input.treatmentPlan,
+                pharmacyId: input.pharmacyId,
+                insurancePlanId: patient?.insurancePlanId,
+                preferredPharmacyId: patient?.preferredPharmacyId,
+                priorAuthCases,
+              },
+              () => {},
+            );
+          } catch (e) {
+            useCareWorkflowStore.getState().pushWorkflowEngineEvent({
+              kind: "encounter_agent_trace",
+              title: "Encounter finalize fallback",
+              detail:
+                e instanceof Error ? e.message : "Encounter pipeline unavailable",
+              trigger: "Judge/demo orchestration step",
+              decision: "Fallback to deterministic finalize",
+              action: "Finalize without agent bundle",
+              result: "Demo continues with workflow state transitions",
+              reason: "Allows one-click demo even when AI credentials are missing.",
+              patientId: input.patientId,
+              role: "system",
+            });
+          }
+
+          const mergedSoap = pipeline ?
+            `${input.soapNote.trim()}\n${pipeline.soapAddendum}`.trim()
+          : input.soapNote;
+          const runId = newEncounterRunId();
           useCareWorkflowStore.getState().finalizeEncounter({
             appointmentId: input.appointmentId,
             patientId: input.patientId,
             providerId: input.providerId,
             pharmacyId: input.pharmacyId,
-            soapNote: input.soapNote,
+            soapNote: mergedSoap,
             treatmentPlan: input.treatmentPlan,
             prescriptionLines: input.prescriptionLines,
+            coverage: pipeline?.coverage,
+            agentRun: pipeline ?
+              {
+                runId,
+                appointmentId: input.appointmentId,
+                patientId: input.patientId,
+                tools: pipeline.toolLoopTrace ?? [],
+                routingSummary: pipeline.paDecisions,
+                soapAddendum: pipeline.soapAddendum,
+                coveragePlanName: pipeline.coverage.plan.name,
+                outcomeLabel: outcomeLabelFromCoverage({
+                  holdForPriorAuth: pipeline.coverage.holdForPriorAuth,
+                  anyStepTherapyBlock: pipeline.coverage.anyStepTherapyBlock,
+                }),
+                timelineEntryTitles: pipeline.timelineEntries.map((e) => e.title),
+              }
+            : undefined,
           });
+
+          useCareWorkflowStore.getState().pushWorkflowEngineEvent({
+            kind: "encounter_agent_trace",
+            title: `Orchestrator run ${runId.slice(-14)}`,
+            detail:
+              "Demo orchestrator used the same encounter workflow pipeline as Provider finalize.",
+            trigger: "Judge/demo orchestration step",
+            decision: "Use encounter finalize workflow path",
+            action: "Run tool loop + coverage adjudication before state mutation",
+            result: "Demo and provider paths now share branching semantics",
+            patientId: input.patientId,
+            role: "system",
+          });
+
+          if (pipeline?.coverage.holdForPriorAuth) {
+            await runBackgroundPaPolicyResolution(input.patientId);
+          }
 
           const postSnap = useCareWorkflowStore.getState().snapshot;
           const postClinical = postSnap.clinicalByPatientId[input.patientId];
@@ -174,7 +265,7 @@ export async function runCareLoopWorkflow(
               appointmentId: input.appointmentId,
               patientId: input.patientId,
               clinical: postClinical,
-              soapNote: input.soapNote,
+              soapNote: mergedSoap,
               treatmentPlan: input.treatmentPlan,
             }),
           });
@@ -188,8 +279,26 @@ export async function runCareLoopWorkflow(
             .getState()
             .setChartInferenceForAppointment(
               input.appointmentId,
-              chartPayload as import("@/types/workflow").ChartInferenceReview,
+              chartPayload as ChartInferenceReview,
             );
+
+          if (pipeline) {
+            for (const row of pipeline.timelineEntries) {
+              useCareWorkflowStore.getState().pushWorkflowTimelineEntry({
+                title: row.title,
+                detail: row.detail,
+                patientId: input.patientId,
+                appointmentId: input.appointmentId,
+              });
+            }
+            if (pipeline.patientNotification) {
+              useCareWorkflowStore.getState().pushAgenticPatientNotification(
+                input.patientId,
+                pipeline.patientNotification.title,
+                pipeline.patientNotification.body,
+              );
+            }
+          }
           break;
         }
         case 5: {

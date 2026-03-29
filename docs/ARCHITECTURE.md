@@ -1,4 +1,4 @@
-# CareLoop AI — Architecture (Hackathon Prototype)
+# Care Orchestrator — Architecture (Hackathon Prototype)
 
 > **Security note:** Never commit API keys. Rotate any key that was exposed (xAI console, chat logs, etc.).
 

@@ -1,5 +1,5 @@
 /**
- * LangGraph definition for the canonical CareLoop demo path.
+ * LangGraph definition for the canonical Care Orchestrator demo path.
  * Nodes append to `auditLog` for an audit trail; wiring to Zustand/DB is done via injected runners (client demo / future API).
  */
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
@@ -40,7 +40,7 @@ async function nodeOpenVisit(state: State): Promise<Partial<State>> {
 async function nodeChartSummary(state: State): Promise<Partial<State>> {
   return {
     phase: "chart_summary",
-    ...push(state, "AI chart summary generated (xAI Grok structured JSON)."),
+    ...push(state, "AI chart summary generated (structured JSON)."),
   };
 }
 

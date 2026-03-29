@@ -20,10 +20,10 @@ type MockAuthState = {
 
 const roleLabels: Record<MockRole, { email: string; name: string }> = {
   provider: { email: "provider@careloop.demo", name: "Dr. Avery Chen" },
-  patient: { email: "patient@careloop.demo", name: "Jordan Ellis" },
+  patient: { email: "patient@careloop.demo", name: "Thaddeus Wainwright" },
   pharmacy: { email: "rx@harborview.demo", name: "Harborview Pharmacy" },
   payer: { email: "payer@summit.demo", name: "Summit Health Plan" },
-  admin: { email: "admin@careloop.demo", name: "CareLoop Admin" },
+  admin: { email: "admin@careloop.demo", name: "Care Orchestrator Admin" },
 };
 
 /**

@@ -23,18 +23,9 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarSeparator,
 } from "@/components/ui/sidebar";
-import { useMockAuthStore } from "@/lib/auth/mock-auth";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import type { MockRole } from "@/lib/auth/mock-auth";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { useCareWorkflowStore } from "@/stores/care-workflow-store";
 
 const nav = [
@@ -47,8 +38,6 @@ const nav = [
 
 export function CareAppSidebar() {
   const pathname = usePathname();
-  const session = useMockAuthStore((s) => s.session);
-  const signInDemo = useMockAuthStore((s) => s.signInDemo);
   const resetDemo = useCareWorkflowStore((s) => s.resetDemo);
 
   return (
@@ -63,10 +52,10 @@ export function CareAppSidebar() {
           </span>
           <div className="flex min-w-0 flex-col group-data-[collapsible=icon]:hidden">
             <span className="truncate text-sm font-semibold tracking-tight text-sidebar-foreground">
-              CareLoop
+              Care Orchestrator
             </span>
             <span className="truncate text-[0.65rem] text-muted-foreground">
-              Ambulatory workflow
+              Care orchestration
             </span>
           </div>
         </Link>
@@ -76,42 +65,28 @@ export function CareAppSidebar() {
           <SidebarGroupLabel className="text-label">Navigate</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {nav.map((item) => (
-                <SidebarMenuItem key={item.href}>
-                  <SidebarMenuButton
-                    render={<Link href={item.href} />}
-                    isActive={pathname === item.href}
-                    tooltip={item.label}
-                  >
-                    <item.icon />
-                    <span>{item.label}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
+              {nav.map((item) => {
+                const active = pathname === item.href;
+                return (
+                  <SidebarMenuItem key={item.href}>
+                    <SidebarMenuButton
+                      render={<Link href={item.href} />}
+                      isActive={active}
+                      tooltip={item.label}
+                      className={cn(
+                        "transition-[opacity,box-shadow,transform] duration-200",
+                        active ?
+                          "relative z-[1] !bg-background font-semibold !text-foreground shadow-[0_3px_12px_-2px_rgba(15,23,42,0.18),0_1px_3px_rgba(15,23,42,0.1)] ring-1 ring-border/70 dark:!bg-sidebar-accent dark:!text-sidebar-accent-foreground dark:shadow-[0_4px_16px_-4px_rgba(0,0,0,0.55)] dark:ring-sidebar-border/60"
+                        : "opacity-[0.58] hover:opacity-100",
+                      )}
+                    >
+                      <item.icon />
+                      <span>{item.label}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
             </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-        <SidebarSeparator />
-        <SidebarGroup className="group-data-[collapsible=icon]:hidden">
-          <SidebarGroupLabel className="text-label">Persona</SidebarGroupLabel>
-          <SidebarGroupContent className="px-2">
-            <Select
-              value={session?.role ?? "provider"}
-              onValueChange={(v) => v && signInDemo(v as MockRole)}
-            >
-              <SelectTrigger className="h-9 w-full bg-sidebar-accent/50">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="provider">Provider</SelectItem>
-                <SelectItem value="patient">Patient</SelectItem>
-                <SelectItem value="pharmacy">Pharmacy</SelectItem>
-                <SelectItem value="payer">Payer</SelectItem>
-              </SelectContent>
-            </Select>
-            <p className="mt-2 text-[0.65rem] leading-snug text-muted-foreground">
-              Mock session - replace with Supabase when configured.
-            </p>
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>

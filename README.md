@@ -1,4 +1,4 @@
-# CareLoop AI
+# Care Orchestrator
 
 Healthcare hackathon prototype: **Next.js 14**, **TypeScript**, **Tailwind**, **shadcn/ui**, **Zustand**, and **LangGraph** for a demo care loop across provider, patient, pharmacy, and payer views.
 
@@ -36,7 +36,7 @@ Structured chart data lives in a **relational SQLite** database (not RAG). Run:
 
 ```bash
 npm run db:push   # create/update tables under data/careloop.sqlite
-npm run db:seed   # 60 demo patients + Jordan/Sam cohorts
+npm run db:seed   # two relational demo patients; UI lists five from bundled seed
 ```
 
 - **GET** `src/app/api/ehr/patients` — patient directory for the header

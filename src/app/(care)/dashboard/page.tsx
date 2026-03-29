@@ -4,10 +4,11 @@ import { CareJourneyTimeline } from "@/components/care-loop/care-journey-timelin
 import { CareNotificationBanners } from "@/components/care-loop/care-notification-banners";
 import { CarePageHeader } from "@/components/care-loop/care-page-header";
 import { DashboardWorkflowTabs } from "@/components/care-loop/dashboard-workflow-tabs";
-import { GuidedStoryPanel } from "@/components/care-loop/guided-story-panel";
 import { JudgeDemoPanel } from "@/components/care-loop/judge-demo-panel";
 import { PanelCard } from "@/components/care-loop/panel-card";
+import { WorkflowStateCard } from "@/components/care-loop/workflow-state-card";
 import { WorkflowStageTracker } from "@/components/care-loop/workflow-stage-tracker";
+import { RecoveryOpsPanel } from "@/components/care-loop/recovery-ops-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
@@ -26,7 +27,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { buildCareNotificationBanners } from "@/lib/care-journey-timeline";
-import { DEFAULT_SELECTED_PATIENT_ID } from "@/lib/seed-data";
+import { SEED_DEMO_ROUTE } from "@/lib/seed-data";
 import { useCareWorkflowStore } from "@/stores/care-workflow-store";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -91,16 +92,16 @@ function DemoEncounterScheduleCard() {
       <CardHeader className="pb-2">
         <CardTitle className="text-base">Manual walk-through primer</CardTitle>
         <CardDescription className="text-xs">
-          Schedules an <strong>arrival</strong> in 30 seconds for the demo patient
-          (Jordan). The Provider workspace auto-opens the encounter - then use
-          Pharmacy → Patient → Payer in order, mirroring real operations.
+          Selects the scripted demo cohort member, then schedules an{" "}
+          <strong>arrival</strong> in 30 seconds. Provider opens the encounter — then
+          use Pharmacy → Patient → Payer in order.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-wrap gap-2">
         <Button
           type="button"
           onClick={() => {
-            selectPatient(DEFAULT_SELECTED_PATIENT_ID);
+            selectPatient(SEED_DEMO_ROUTE.patientId);
             scheduleDemoEncounter(30);
             router.push("/provider");
           }}
@@ -127,6 +128,7 @@ export default function DashboardPage() {
   const rx = snapshot.prescriptions.filter((p) => p.patientId === patientId);
   const followUps = snapshot.followUpTasks.filter((t) => t.patientId === patientId);
   const payer = snapshot.payerStatuses.find((e) => e.patientId === patientId);
+  const latestEvent = snapshot.workflowEngineEvents.find((e) => e.patientId === patientId);
 
   const cohortRows = useMemo(() => {
     return snapshot.patients.map((p) => {
@@ -147,9 +149,20 @@ export default function DashboardPage() {
 
       <JudgeDemoPanel />
 
-      <DemoEncounterScheduleCard />
+      {appt ?
+        <WorkflowStateCard
+          title="Current demo state"
+          currentState={`Stage: ${formatStageLabel(appt.currentStage)}`}
+          nextAction={appt.nextAction}
+          reason={
+            latestEvent?.reason ??
+            latestEvent?.detail ??
+            "State moves automatically when the workflow engine chooses each next step."
+          }
+        />
+      : null}
 
-      <GuidedStoryPanel />
+      <DemoEncounterScheduleCard />
 
       <CareNotificationBanners notifications={workflowNotifications} />
 
@@ -157,6 +170,8 @@ export default function DashboardPage() {
         key={`${appt?.id ?? "none"}-${appt?.currentStage ?? ""}`}
         stage={appt?.currentStage}
       />
+
+      <RecoveryOpsPanel />
 
       <section className="flex flex-col gap-4">
         {appt && (
@@ -276,7 +291,7 @@ export default function DashboardPage() {
               <p className="text-xs leading-relaxed">
                 CDS and SOAP; optional{" "}
                 <code className="rounded border border-border/80 bg-muted/50 px-1 py-px text-[0.65rem]">
-                  xAI Grok via /api/ai/summary
+                  AI summary via /api/ai/summary
                 </code>
               </p>
             </div>

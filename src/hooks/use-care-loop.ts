@@ -43,20 +43,26 @@ export function useCareLoop() {
         null
       : null;
 
-    const followUpTasks = snapshot.followUpTasks.filter(
-      (t) => t.patientId === selectedPatientId,
-    );
+    const followUpTasks =
+      selectedPatientId ?
+        snapshot.followUpTasks.filter((t) => t.patientId === selectedPatientId)
+      : [];
 
-    const patientResponses: PatientCareEvent[] = (
-      snapshot.patientCareEvents ?? []
-    ).filter((e) => e.patientId === selectedPatientId);
+    const patientResponses: PatientCareEvent[] =
+      selectedPatientId ?
+        (snapshot.patientCareEvents ?? []).filter(
+          (e) => e.patientId === selectedPatientId,
+        )
+      : [];
 
     const payerStatus =
-      snapshot.payerStatuses.find(
-        (ps) =>
-          ps.patientId === selectedPatientId &&
-          (!appointment || ps.appointmentId === appointment.id),
-      ) ?? null;
+      selectedPatientId ?
+        (snapshot.payerStatuses.find(
+          (ps) =>
+            ps.patientId === selectedPatientId &&
+            (!appointment || ps.appointmentId === appointment.id),
+        ) ?? null)
+      : null;
 
     return {
       patient,
@@ -73,7 +79,7 @@ export function useCareLoop() {
   }, [snapshot, selectedPatientId, selectedAppointmentId]);
 }
 
-/** Stable action bundle for CareLoop (same store — all portals stay in sync). */
+/** Stable action bundle for Care Orchestrator (same store — all portals stay in sync). */
 export function useCareLoopActions() {
   return useCareWorkflowStore(
     useShallow((s) => ({

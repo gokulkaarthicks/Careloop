@@ -1,5 +1,5 @@
 /**
- * CareLoop global state — single Zustand store + persist.
+ * Care Orchestrator global state — single Zustand store + persist.
  * Provider, patient, pharmacy, and payer routes subscribe to the same `snapshot`
  * so workflow changes propagate everywhere. Prefer `useCareLoop()` for derived
  * slices (patient, appointment, Rx, order, tasks, responses, payer row).
@@ -15,6 +15,7 @@ import type {
   ChartInferenceReview,
   Patient,
   PayerClaimStatus,
+  PharmacyOrder,
   Prescription,
   PrescriptionLine,
   ProviderVisitDraft,
@@ -22,7 +23,7 @@ import type {
   WorkflowStage,
   WorkflowTimelineEntry,
 } from "@/types/workflow";
-import type { AgentActivityState } from "@/types/agentic";
+import type { AgentActivityState, EncounterAgentRunInput } from "@/types/agentic";
 import { initialAgentActivity } from "@/types/agentic";
 import type {
   CoverageEvaluationResult,
@@ -30,6 +31,15 @@ import type {
   WorkflowEngineEvent,
   WorkflowEngineEventKind,
 } from "@/types/benefits";
+import type {
+  AppealBundle,
+  ConnectorRun,
+  ExternalSyncCheckpoint,
+  RecoveryAction,
+  RecoveryCase,
+  RecoveryCaseStatus,
+  SlaTimer,
+} from "@/types/recovery";
 import {
   buildPatientFacingVisitSummary,
   buildPharmacyHandoffPayload,
@@ -43,7 +53,12 @@ import {
 } from "@/lib/orchestration/step-definitions";
 import type { CareLoopOrchestrationState } from "@/lib/orchestration/types";
 import type { PreVisitAgentOutput } from "@/types/pre-visit-agent";
-import { DEFAULT_SELECTED_PATIENT_ID, SEED } from "@/lib/seed-data";
+import { SEED } from "@/lib/seed-data";
+import {
+  collectEscalations,
+  decisionDetail,
+  deriveCoverageBranch,
+} from "@/lib/orchestration/workflow-engine";
 
 export type PatientSymptomCheckInPayload = {
   overall: "better" | "same" | "worse";
@@ -58,8 +73,9 @@ function cloneSeed() {
 /** First scheduled appointment for patient — drives “current visit” in portals. */
 export function defaultAppointmentIdForPatient(
   snapshot: typeof SEED,
-  patientId: UUID,
+  patientId: UUID | null,
 ): UUID | null {
+  if (!patientId) return null;
   const appts = snapshot.appointments
     .filter((a) => a.patientId === patientId)
     .sort(
@@ -70,7 +86,8 @@ export function defaultAppointmentIdForPatient(
 }
 
 type CareWorkflowState = {
-  selectedPatientId: UUID;
+  /** No member selected until the user picks one (no default cohort face). */
+  selectedPatientId: UUID | null;
   /** Active appointment for the selected patient (all portals read the same slice). */
   selectedAppointmentId: UUID | null;
   snapshot: typeof SEED;
@@ -84,12 +101,12 @@ type CareWorkflowState = {
   /** Demo: auto-open encounter when wall clock passes this ISO time */
   demoEncounterUnlockAt: string | null;
   mergeEhrPatientDirectory: (patients: Patient[]) => void;
-  hydrateFromEhrApi: (patientId: UUID) => Promise<void>;
+  hydrateFromEhrApi: (patientId: UUID | null) => Promise<void>;
   scheduleDemoEncounter: (secondsFromNow?: number) => void;
   clearDemoEncounterSchedule: () => void;
   /** Visit-specific briefing lines from EHR API (deterministic, not LLM) */
   ehrVisitBriefingLines: Record<string, string[]>;
-  setSelectedPatientId: (id: UUID) => void;
+  setSelectedPatientId: (id: UUID | null) => void;
   setSelectedAppointmentId: (appointmentId: UUID | null) => void;
   /** Sets patient + default appointment for that patient */
   selectPatient: (patientId: UUID) => void;
@@ -139,6 +156,8 @@ type CareWorkflowState = {
     treatmentPlan: string;
     prescriptionLines: PrescriptionLine[];
     coverage?: CoverageEvaluationResult;
+    /** Persisted agentic proof bundle (Provider finalize). */
+    agentRun?: EncounterAgentRunInput;
   }) => void;
   resolvePriorAuthCase: (
     caseId: UUID,
@@ -148,10 +167,28 @@ type CareWorkflowState = {
     kind: WorkflowEngineEventKind;
     title: string;
     detail?: string;
+    trigger?: string;
+    decision?: string;
+    action?: string;
+    result?: string;
+    reason?: string;
     patientId?: UUID;
     prescriptionId?: UUID;
     role?: WorkflowEngineEvent["role"];
   }) => void;
+  openRecoveryCase: (
+    payload: Omit<RecoveryCase, "id" | "openedAt" | "updatedAt"> & { id?: UUID },
+  ) => RecoveryCase;
+  updateRecoveryCaseStatus: (
+    caseId: UUID,
+    status: RecoveryCaseStatus,
+    patch?: Partial<Pick<RecoveryCase, "summary" | "title" | "closedAt">>,
+  ) => void;
+  appendRecoveryAction: (action: Omit<RecoveryAction, "id" | "createdAt"> & { id?: UUID }) => void;
+  saveAppealBundle: (bundle: AppealBundle) => void;
+  logConnectorRun: (run: ConnectorRun) => void;
+  logExternalSyncCheckpoint: (checkpoint: ExternalSyncCheckpoint) => void;
+  upsertSlaTimer: (timer: SlaTimer) => void;
   workflowDockPrimaryAction: {
     label: string;
     disabled: boolean;
@@ -213,7 +250,8 @@ type CareWorkflowState = {
   guidedStory: GuidedStoryState;
   setGuidedStory: (partial: Partial<GuidedStoryState>) => void;
   resetGuidedStory: () => void;
-  resetDemo: () => void;
+  /** Reset workflow snapshot; by default clears judge-demo UI. Use `preserveJudgeDemo` from automated judge runs. */
+  resetDemo: (options?: { preserveJudgeDemo?: boolean }) => void;
   /** Bottom overlay — agentic encounter pipeline */
   agentActivity: AgentActivityState;
   setAgentActivity: (
@@ -250,6 +288,13 @@ function ensureWorkflowFields(snap: typeof SEED) {
   if (!snap.workflowEngineEvents) snap.workflowEngineEvents = [];
   if (!snap.priorAuthCases) snap.priorAuthCases = [];
   if (!snap.insurancePlans) snap.insurancePlans = [];
+  if (!snap.encounterAgentRunsByAppointment) snap.encounterAgentRunsByAppointment = {};
+  if (!snap.recoveryCases) snap.recoveryCases = [];
+  if (!snap.recoveryActions) snap.recoveryActions = [];
+  if (!snap.appealBundles) snap.appealBundles = {};
+  if (!snap.connectorRuns) snap.connectorRuns = [];
+  if (!snap.externalSyncCheckpoints) snap.externalSyncCheckpoints = [];
+  if (!snap.slaTimers) snap.slaTimers = [];
 }
 
 function pushWorkflowEngineEventImpl(
@@ -258,6 +303,11 @@ function pushWorkflowEngineEventImpl(
     kind: WorkflowEngineEventKind;
     title: string;
     detail?: string;
+    trigger?: string;
+    decision?: string;
+    action?: string;
+    result?: string;
+    reason?: string;
     patientId?: UUID;
     prescriptionId?: UUID;
     role?: WorkflowEngineEvent["role"];
@@ -271,11 +321,46 @@ function pushWorkflowEngineEventImpl(
     kind: partial.kind,
     title: partial.title,
     detail: partial.detail,
+    trigger: partial.trigger,
+    decision: partial.decision,
+    action: partial.action,
+    result: partial.result,
+    reason: partial.reason,
     patientId: partial.patientId,
     prescriptionId: partial.prescriptionId,
     role: partial.role ?? "system",
   });
   if (snap.workflowEngineEvents.length > 48) snap.workflowEngineEvents.length = 48;
+}
+
+function applyEscalationEvents(
+  snap: typeof SEED,
+  context: { patientId?: UUID; appointmentId?: UUID; prescriptionId?: UUID },
+) {
+  const rows = collectEscalations(snap, context);
+  for (const row of rows) {
+    const alreadyExists = (snap.workflowEngineEvents ?? []).some(
+      (e) =>
+        e.kind === row.kind &&
+        e.patientId === row.patientId &&
+        e.prescriptionId === row.prescriptionId &&
+        e.title === row.title,
+    );
+    if (alreadyExists) continue;
+    pushWorkflowEngineEventImpl(snap, {
+      kind: row.kind,
+      title: row.title,
+      detail: row.detail,
+      trigger: "Escalation rule engine",
+      decision: "Escalate missed milestone",
+      action: "Create visible workflow alert",
+      result: "Role queues can react to overdue care activity",
+      reason: row.reason,
+      patientId: row.patientId,
+      prescriptionId: row.prescriptionId,
+      role: row.role,
+    });
+  }
 }
 
 const initialCareLoopOrchestration: CareLoopOrchestrationState = {
@@ -365,7 +450,7 @@ function runMedicationPickup(
         }
       : {
           title: "Patient confirmed pickup",
-          detail: `${patient?.displayName ?? "Patient"} confirmed in CareLoop that they picked up ${drugLine}. Same milestone as pharmacy counter.`,
+          detail: `${patient?.displayName ?? "Patient"} confirmed in Care Orchestrator that they picked up ${drugLine}. Same milestone as pharmacy counter.`,
         };
 
   snap.workflowTimeline.unshift({
@@ -416,11 +501,8 @@ function runMedicationPickup(
 export const useCareWorkflowStore = create<CareWorkflowState>()(
   persist(
     (set, get) => ({
-      selectedPatientId: DEFAULT_SELECTED_PATIENT_ID,
-      selectedAppointmentId: defaultAppointmentIdForPatient(
-        SEED,
-        DEFAULT_SELECTED_PATIENT_ID,
-      ),
+      selectedPatientId: null,
+      selectedAppointmentId: null,
       snapshot: cloneSeed(),
       aiLoading: false,
       lastChartSummaryMeta: null,
@@ -438,6 +520,84 @@ export const useCareWorkflowStore = create<CareWorkflowState>()(
         set((s) => {
           const snap = structuredClone(s.snapshot);
           pushWorkflowEngineEventImpl(snap, partial);
+          return { snapshot: snap };
+        }),
+
+      openRecoveryCase: (payload) => {
+        const newCase: RecoveryCase = {
+          ...payload,
+          id: payload.id ?? `rc_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          openedAt: ts(),
+          updatedAt: ts(),
+        };
+        set((s) => {
+          const snap = structuredClone(s.snapshot);
+          ensureWorkflowFields(snap);
+          snap.recoveryCases.unshift(newCase);
+          return { snapshot: snap };
+        });
+        return newCase;
+      },
+
+      updateRecoveryCaseStatus: (caseId, status, patch) =>
+        set((s) => {
+          const snap = structuredClone(s.snapshot);
+          ensureWorkflowFields(snap);
+          const row = snap.recoveryCases.find((c) => c.id === caseId);
+          if (!row) return s;
+          row.status = status;
+          row.updatedAt = ts();
+          if (patch?.summary) row.summary = patch.summary;
+          if (patch?.title) row.title = patch.title;
+          if (patch?.closedAt) row.closedAt = patch.closedAt;
+          return { snapshot: snap };
+        }),
+
+      appendRecoveryAction: (action) =>
+        set((s) => {
+          const snap = structuredClone(s.snapshot);
+          ensureWorkflowFields(snap);
+          snap.recoveryActions.unshift({
+            ...action,
+            id: action.id ?? `ra_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+            createdAt: ts(),
+          });
+          return { snapshot: snap };
+        }),
+
+      saveAppealBundle: (bundle) =>
+        set((s) => {
+          const snap = structuredClone(s.snapshot);
+          ensureWorkflowFields(snap);
+          snap.appealBundles[bundle.recoveryCaseId] = bundle;
+          return { snapshot: snap };
+        }),
+
+      logConnectorRun: (run) =>
+        set((s) => {
+          const snap = structuredClone(s.snapshot);
+          ensureWorkflowFields(snap);
+          const idx = snap.connectorRuns.findIndex((r) => r.id === run.id);
+          if (idx >= 0) snap.connectorRuns[idx] = run;
+          else snap.connectorRuns.unshift(run);
+          return { snapshot: snap };
+        }),
+
+      logExternalSyncCheckpoint: (checkpoint) =>
+        set((s) => {
+          const snap = structuredClone(s.snapshot);
+          ensureWorkflowFields(snap);
+          snap.externalSyncCheckpoints.unshift(checkpoint);
+          return { snapshot: snap };
+        }),
+
+      upsertSlaTimer: (timer) =>
+        set((s) => {
+          const snap = structuredClone(s.snapshot);
+          ensureWorkflowFields(snap);
+          const idx = snap.slaTimers.findIndex((x) => x.id === timer.id);
+          if (idx >= 0) snap.slaTimers[idx] = timer;
+          else snap.slaTimers.unshift(timer);
           return { snapshot: snap };
         }),
 
@@ -529,6 +689,7 @@ export const useCareWorkflowStore = create<CareWorkflowState>()(
       setSelectedAppointmentId: (appointmentId) =>
         set((s) => {
           if (appointmentId == null) return { selectedAppointmentId: null };
+          if (s.selectedPatientId == null) return s;
           const appt = s.snapshot.appointments.find((a) => a.id === appointmentId);
           if (!appt || appt.patientId !== s.selectedPatientId) return s;
           return { selectedAppointmentId: appointmentId };
@@ -555,6 +716,7 @@ export const useCareWorkflowStore = create<CareWorkflowState>()(
               role: "provider",
             });
           }
+          applyEscalationEvents(snap, { patientId });
           return {
             snapshot: snap,
             selectedPatientId: patientId,
@@ -593,10 +755,21 @@ export const useCareWorkflowStore = create<CareWorkflowState>()(
         set((s) => {
           const snap = structuredClone(s.snapshot);
           snap.patients = patients;
-          return { snapshot: snap };
+          const sel = s.selectedPatientId;
+          const selectionStillValid = sel && patients.some((p) => p.id === sel);
+          return {
+            snapshot: snap,
+            ...(!sel || selectionStillValid ?
+              {}
+            : {
+                selectedPatientId: null,
+                selectedAppointmentId: null,
+              }),
+          };
         }),
 
       hydrateFromEhrApi: async (patientId) => {
+        if (!patientId) return;
         try {
           const res = await fetch(`/api/ehr/context/${patientId}`);
           if (!res.ok) return;
@@ -749,7 +922,7 @@ export const useCareWorkflowStore = create<CareWorkflowState>()(
               dueAt: new Date(Date.now() + 86400000).toISOString(),
               priority: "normal",
               ownerRole: "patient",
-              nextAction: "Respond to CareLoop message or call clinic",
+              nextAction: "Respond to Care Orchestrator message or call clinic",
               notes: "Generated when Rx sent to pharmacy.",
               createdAt: ts(),
               updatedAt: ts(),
@@ -843,6 +1016,24 @@ export const useCareWorkflowStore = create<CareWorkflowState>()(
               body: `${pharmacyEntity?.name ?? "Your pharmacy"}: your prescription is ready for pickup. Bring a valid ID.`,
               source: "pharmacy",
             });
+            pushWorkflowEngineEventImpl(snap, {
+              kind: "medication_ready",
+              title: "Medication ready for pickup",
+              detail: `${drugLine} is ready at ${pharmacyEntity?.name ?? "the pharmacy"}.`,
+              trigger: "Pharmacy marked order ready",
+              decision: "Notify patient and await pickup",
+              action: "Advance prescription to ready_for_pickup",
+              result: "Patient pickup is now the next critical step",
+              reason: "Fulfillment completed at pharmacy counter.",
+              patientId: rx.patientId,
+              prescriptionId,
+              role: "pharmacy",
+            });
+            applyEscalationEvents(snap, {
+              patientId: rx.patientId,
+              appointmentId: rx.appointmentId,
+              prescriptionId: rx.id,
+            });
           }
           return { snapshot: snap };
         }),
@@ -873,7 +1064,7 @@ export const useCareWorkflowStore = create<CareWorkflowState>()(
             c.status = "completed";
             c.completedAt = t;
             c.updatedAt = t;
-            c.responseSummary = "Logged in CareLoop";
+            c.responseSummary = "Logged in Care Orchestrator";
             c.nextAction = "Thanks — you’re set for this check-in";
           }
           const payerRow = snap.payerStatuses.find((p) => p.patientId === patientId);
@@ -891,7 +1082,7 @@ export const useCareWorkflowStore = create<CareWorkflowState>()(
             id: `wfe_med_${Date.now()}`,
             occurredAt: t,
             title: "Patient logged medication",
-            detail: `${name} confirmed taking medication as directed in CareLoop.`,
+            detail: `${name} confirmed taking medication as directed in Care Orchestrator.`,
             patientId,
             prescriptionId: rx?.id,
           });
@@ -911,6 +1102,7 @@ export const useCareWorkflowStore = create<CareWorkflowState>()(
             body: "We shared this with your care team. Keep following your plan unless your clinician tells you otherwise.",
             source: "care_team",
           });
+          applyEscalationEvents(snap, { patientId, prescriptionId: rx?.id });
           return { snapshot: snap };
         }),
 
@@ -923,7 +1115,7 @@ export const useCareWorkflowStore = create<CareWorkflowState>()(
           c.status = "completed";
           c.completedAt = t;
           c.updatedAt = t;
-          c.responseSummary = "Completed in CareLoop";
+          c.responseSummary = "Completed in Care Orchestrator";
           c.nextAction = "Recorded";
           ensureWorkflowFields(snap);
           const name =
@@ -947,6 +1139,10 @@ export const useCareWorkflowStore = create<CareWorkflowState>()(
             );
             payerRow.updatedAt = t;
           }
+          applyEscalationEvents(snap, {
+            patientId: c.patientId,
+            prescriptionId: c.prescriptionId,
+          });
           return { snapshot: snap };
         }),
 
@@ -986,9 +1182,10 @@ export const useCareWorkflowStore = create<CareWorkflowState>()(
             patientId,
             createdAt: t,
             title: "We received your check-in",
-            body: "Your care team can see this in CareLoop. Call your clinic if symptoms get worse or worry you.",
+            body: "Your care team can see this in Care Orchestrator. Call your clinic if symptoms get worse or worry you.",
             source: "care_team",
           });
+          applyEscalationEvents(snap, { patientId });
           return { snapshot: snap };
         }),
 
@@ -1116,17 +1313,66 @@ export const useCareWorkflowStore = create<CareWorkflowState>()(
         treatmentPlan,
         prescriptionLines,
         coverage,
+        agentRun,
       }) =>
         set((s) => {
           const snap = structuredClone(s.snapshot);
           ensureWorkflowFields(snap);
           const appt = findAppointment(snap, appointmentId);
-          if (!appt) return s;
-          const rx = snap.prescriptions.find((p) => p.appointmentId === appointmentId);
-          if (!rx || rx.status !== "draft") return s;
+          if (!appt || appt.patientId !== patientId) return s;
+
+          let rx = snap.prescriptions.find((p) => p.appointmentId === appointmentId);
+          if (rx && rx.status !== "draft") return s;
+
+          const t = ts();
+
+          /** EHR / SQLite cohorts often have no seed Rx row; agentic finalize still runs from UI state. */
+          if (!rx) {
+            const rxId = `rx_ehr_${Date.now()}`;
+            const phOrderId = `phord_ehr_${Date.now()}`;
+            const stub: Prescription = {
+              id: rxId,
+              appointmentId,
+              patientId,
+              prescriberId: providerId,
+              status: "draft",
+              priority: "normal",
+              notes:
+                "Created at finalize — no prior workflow Rx for this appointment (EHR cohort).",
+              nextAction: "Transmit to pharmacy",
+              ownerRole: "provider",
+              createdAt: t,
+              updatedAt: t,
+              lines: [
+                {
+                  id: `rxl_stub_${Date.now()}`,
+                  drugName: "—",
+                  strength: "",
+                  quantity: "30",
+                  refills: 0,
+                  sig: "",
+                },
+              ],
+            };
+            const orderStub: PharmacyOrder = {
+              id: phOrderId,
+              patientId,
+              prescriptionId: rxId,
+              pharmacyId,
+              status: "queued",
+              priority: "normal",
+              notes: "Linked when encounter finalizes (demo).",
+              nextAction: "Await prescriber e-send",
+              ownerRole: "pharmacy",
+              createdAt: t,
+              updatedAt: t,
+            };
+            snap.prescriptions.push(stub);
+            snap.pharmacyOrders.push(orderStub);
+            rx = stub;
+          }
 
           const encId = `enc_fin_${Date.now()}`;
-          const t = ts();
 
           const linesWithIds: PrescriptionLine[] = prescriptionLines.map((line, i) => ({
             ...line,
@@ -1185,14 +1431,45 @@ export const useCareWorkflowStore = create<CareWorkflowState>()(
               });
           }
 
+          const payerIdStub = coverage?.plan.payerId ?? snap.payers[0]?.id;
+          if (payerIdStub) {
+            const hasPayerRow = snap.payerStatuses.some(
+              (p) => p.appointmentId === appointmentId,
+            );
+            if (!hasPayerRow) {
+              snap.payerStatuses.unshift({
+                id: `paystat_${Date.now()}`,
+                patientId,
+                payerId: payerIdStub,
+                appointmentId,
+                encounterId: encId,
+                claimStatus: "pending",
+                priority: "normal",
+                ownerRole: "payer",
+                nextAction:
+                  "Track professional + pharmacy milestones after finalize (demo)",
+                notes: "Claim stub created when encounter was finalized.",
+                createdAt: t,
+                updatedAt: t,
+                closureCompletionScore: 22,
+              });
+            }
+          }
+
           const stepBlock = coverage?.anyStepTherapyBlock;
           const paHold = coverage?.holdForPriorAuth;
+          const coverageBranch = deriveCoverageBranch(coverage);
 
           if (coverage) {
             pushWorkflowEngineEventImpl(snap, {
               kind: "insurance_checked",
               title: `Insurance: ${coverage.plan.name}`,
-              detail: `Formulary evaluated — PA hold ${coverage.holdForPriorAuth ? "yes" : "no"}; step therapy block ${coverage.anyStepTherapyBlock ? "yes" : "no"}.`,
+              detail: decisionDetail(coverageBranch),
+              trigger: coverageBranch.trigger,
+              decision: coverageBranch.decision,
+              action: coverageBranch.action,
+              result: coverageBranch.result,
+              reason: coverageBranch.reason,
               patientId,
               prescriptionId: rx.id,
               role: "system",
@@ -1215,6 +1492,11 @@ export const useCareWorkflowStore = create<CareWorkflowState>()(
               kind: "pa_required",
               title: "Step therapy gate",
               detail: "E-prescribe held pending documentation (deterministic demo).",
+              trigger: coverageBranch.trigger,
+              decision: coverageBranch.decision,
+              action: coverageBranch.action,
+              result: coverageBranch.result,
+              reason: coverageBranch.reason,
               patientId,
               prescriptionId: rx.id,
               role: "provider",
@@ -1229,33 +1511,56 @@ export const useCareWorkflowStore = create<CareWorkflowState>()(
             appt.nextAction = "Await payer PA decision";
             appt.updatedAt = t;
 
-            const paCase: PriorAuthCase = {
-              id: `pa_${Date.now()}`,
-              patientId,
-              appointmentId,
-              prescriptionId: rx.id,
-              payerId: coverage.plan.payerId,
-              planId: coverage.plan.id,
-              status: "pending_review",
-              drugName: linesWithIds.map((l) => l.drugName).join(", "),
-              lineIndex: 0,
-              submittedAt: t,
-              notes: "Submitted from agentic finalize (demo).",
-            };
-            snap.priorAuthCases.unshift(paCase);
+            const paLines = coverage.lines.filter((line) => line.route === "payer_prior_auth");
+            const targets =
+              paLines.length > 0 ?
+                paLines
+              : [
+                  {
+                    drugName: linesWithIds.map((l) => l.drugName).join(", "),
+                    lineIndex: 0,
+                    reason: "Coverage hold required payer review.",
+                  },
+                ];
+            for (const target of targets) {
+              const paCase: PriorAuthCase = {
+                id: `pa_${Date.now()}_${target.lineIndex}`,
+                patientId,
+                appointmentId,
+                prescriptionId: rx.id,
+                payerId: coverage.plan.payerId,
+                planId: coverage.plan.id,
+                status: "pending_review",
+                drugName: target.drugName,
+                lineIndex: target.lineIndex,
+                submittedAt: t,
+                notes: `Submitted from encounter finalize. ${target.reason ?? ""}`.trim(),
+              };
+              snap.priorAuthCases.unshift(paCase);
+              pushWorkflowEngineEventImpl(snap, {
+                kind: "payer_alerted",
+                title: "Payer queue: new PA case",
+                detail: `${paCase.id} · ${paCase.drugName}`,
+                trigger: "Coverage branch selected PA route",
+                decision: "Create PA case",
+                action: "Queued case for payer review",
+                result: "Payer queue has a new pending case",
+                reason: target.reason,
+                patientId,
+                prescriptionId: rx.id,
+                role: "payer",
+              });
+            }
 
             pushWorkflowEngineEventImpl(snap, {
               kind: "pa_submitted",
               title: "PA submitted to payer",
-              detail: `Drugs: ${paCase.drugName}. SLA ~${coverage.plan.paTurnaroundBusinessDays} business days (mock).`,
-              patientId,
-              prescriptionId: rx.id,
-              role: "payer",
-            });
-            pushWorkflowEngineEventImpl(snap, {
-              kind: "payer_alerted",
-              title: "Payer queue: new PA case",
-              detail: paCase.id,
+              detail: `Drugs: ${targets.map((x) => x.drugName).join(", ")}. SLA ~${coverage.plan.paTurnaroundBusinessDays} business days (mock).`,
+              trigger: coverageBranch.trigger,
+              decision: coverageBranch.decision,
+              action: coverageBranch.action,
+              result: coverageBranch.result,
+              reason: coverageBranch.reason,
               patientId,
               prescriptionId: rx.id,
               role: "payer",
@@ -1318,11 +1623,34 @@ export const useCareWorkflowStore = create<CareWorkflowState>()(
             pushWorkflowEngineEventImpl(snap, {
               kind: "pharmacy_order_sent",
               title: "E-Rx released to pharmacy",
-              detail: pharmacyEntity?.name ?? "Pharmacy",
+              detail: coverage?.anyNetworkMismatch ?
+                `${pharmacyEntity?.name ?? "Pharmacy"} (network mismatch detected for at least one line)` :
+                (pharmacyEntity?.name ?? "Pharmacy"),
+              trigger: coverageBranch.trigger,
+              decision: coverageBranch.decision,
+              action: coverageBranch.action,
+              result: coverageBranch.result,
+              reason: coverageBranch.reason,
               patientId,
               prescriptionId: rx.id,
               role: "pharmacy",
             });
+            if (coverage?.anyNetworkMismatch) {
+              pushWorkflowEngineEventImpl(snap, {
+                kind: "network_mismatch",
+                title: "Pharmacy network check",
+                detail:
+                  "At least one medication line prefers an in-network pharmacy. Continue in demo or reroute provider selection.",
+                trigger: "Coverage returned preferredPharmacyInNetwork=false",
+                decision: "Flag network mismatch",
+                action: "Keep current route but surface warning",
+                result: "Provider and pharmacy see network risk",
+                reason: "Selected pharmacy may be out-of-network for part of this fill.",
+                patientId,
+                prescriptionId: rx.id,
+                role: "system",
+              });
+            }
 
             const payerRowDirect = snap.payerStatuses.find((p) => p.appointmentId === appointmentId);
             if (payerRowDirect) {
@@ -1379,7 +1707,7 @@ export const useCareWorkflowStore = create<CareWorkflowState>()(
               dueAt: new Date(Date.now() + 86400000).toISOString(),
               priority: "normal",
               ownerRole: "patient",
-              nextAction: "Respond to CareLoop or call clinic if questions",
+              nextAction: "Respond in Care Orchestrator or call clinic if questions",
               notes: "Created when encounter was finalized.",
               createdAt: t,
               updatedAt: t,
@@ -1391,7 +1719,7 @@ export const useCareWorkflowStore = create<CareWorkflowState>()(
             patientId,
             appointmentId,
             prescriptionId: rx.id,
-            title: "Read your visit summary in CareLoop",
+            title: "Read your visit summary in Care Orchestrator",
             description: "Plain-language recap from your clinician.",
             taskType: "education",
             status: "scheduled",
@@ -1408,10 +1736,30 @@ export const useCareWorkflowStore = create<CareWorkflowState>()(
             kind: "prescription_created",
             title: "Encounter signed — Rx updated",
             detail: rx.status,
+            trigger: "Provider finalized visit",
+            decision: stepBlock ?
+              "Hold for step therapy"
+            : paHold ?
+              "Submit prior authorization"
+            : "Release to pharmacy",
+            action: "Workflow state advanced by finalize",
+            result: `Prescription status is now ${rx.status}`,
+            reason: coverageBranch.reason,
             patientId,
             prescriptionId: rx.id,
             role: "provider",
           });
+
+          applyEscalationEvents(snap, { patientId, appointmentId, prescriptionId: rx.id });
+
+          if (agentRun) {
+            snap.encounterAgentRunsByAppointment[appointmentId] = {
+              ...agentRun,
+              finishedAt: t,
+              encounterId: encId,
+              prescriptionId: agentRun.prescriptionId ?? rx.id,
+            };
+          }
 
           return { snapshot: snap };
         }),
@@ -1488,6 +1836,11 @@ export const useCareWorkflowStore = create<CareWorkflowState>()(
               kind: "pa_approved",
               title: "PA approved — e-Rx released",
               detail: pa.drugName,
+              trigger: "Payer adjudication completed",
+              decision: "Approve PA",
+              action: "Release prescription to pharmacy",
+              result: "Pharmacy queue now owns fill workflow",
+              reason: "Plan approved required medication.",
               patientId: pa.patientId,
               prescriptionId: pa.prescriptionId,
               role: "payer",
@@ -1524,6 +1877,11 @@ export const useCareWorkflowStore = create<CareWorkflowState>()(
               kind: "pa_denied",
               title: "PA denied",
               detail: pa.denialReason,
+              trigger: "Payer adjudication completed",
+              decision: "Deny PA",
+              action: "Return to provider for appeal/alternative",
+              result: "Prescription remains blocked from pharmacy release",
+              reason: pa.denialReason,
               patientId: pa.patientId,
               prescriptionId: pa.prescriptionId,
               role: "payer",
@@ -1567,11 +1925,22 @@ export const useCareWorkflowStore = create<CareWorkflowState>()(
               kind: "pa_more_info_needed",
               title: "PA: more information requested",
               detail: pa.moreInfoQuestion,
+              trigger: "Payer adjudication completed",
+              decision: "Need more information",
+              action: "Create provider documentation task",
+              result: "PA case remains blocked pending chart upload",
+              reason: pa.moreInfoQuestion,
               patientId: pa.patientId,
               prescriptionId: pa.prescriptionId,
               role: "provider",
             });
           }
+
+          applyEscalationEvents(snap, {
+            patientId: pa.patientId,
+            appointmentId: pa.appointmentId,
+            prescriptionId: pa.prescriptionId,
+          });
 
           return { snapshot: snap };
         }),
@@ -1676,23 +2045,23 @@ export const useCareWorkflowStore = create<CareWorkflowState>()(
           return { snapshot: snap };
         }),
 
-      resetDemo: () => {
+      resetDemo: (options) => {
         const snap = cloneSeed();
-        const pid = DEFAULT_SELECTED_PATIENT_ID;
-        set({
-          selectedPatientId: pid,
-          selectedAppointmentId: defaultAppointmentIdForPatient(snap, pid),
+        const preserveJudgeDemo = options?.preserveJudgeDemo === true;
+        set((s) => ({
+          selectedPatientId: null,
+          selectedAppointmentId: null,
           snapshot: snap,
           aiLoading: false,
           lastChartSummaryMeta: null,
           demoEncounterUnlockAt: null,
           ehrVisitBriefingLines: {},
           careLoopOrchestration: initialCareLoopOrchestration,
-          judgeDemo: getInitialJudgeDemo(),
+          judgeDemo: preserveJudgeDemo ? s.judgeDemo : getInitialJudgeDemo(),
           guidedStory: getInitialGuidedStory(),
           agentActivity: initialAgentActivity,
           workflowDockPrimaryAction: null,
-        });
+        }));
       },
     }),
     {
@@ -1707,10 +2076,22 @@ export const useCareWorkflowStore = create<CareWorkflowState>()(
         const p = persisted as Partial<CareWorkflowState> | undefined;
         const cur = current as CareWorkflowState;
         if (!p) return cur;
-        const snap = p.snapshot ?? cur.snapshot;
-        const pid = p.selectedPatientId ?? cur.selectedPatientId;
-        let aid = p.selectedAppointmentId ?? null;
-        if (aid == null) aid = defaultAppointmentIdForPatient(snap, pid);
+        const snap = structuredClone(p.snapshot ?? cur.snapshot) as typeof SEED;
+        ensureWorkflowFields(snap);
+        const pid =
+          p.selectedPatientId !== undefined ? p.selectedPatientId : cur.selectedPatientId;
+        let aid =
+          p.selectedAppointmentId !== undefined ?
+            p.selectedAppointmentId
+          : cur.selectedAppointmentId;
+        if (pid == null) {
+          aid = null;
+        } else if (
+          aid == null ||
+          !snap.appointments.some((a) => a.id === aid && a.patientId === pid)
+        ) {
+          aid = defaultAppointmentIdForPatient(snap, pid);
+        }
         return {
           ...cur,
           ...p,

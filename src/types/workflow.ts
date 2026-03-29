@@ -1,5 +1,5 @@
 /**
- * CareLoop AI — workflow entity types.
+ * Care Orchestrator — workflow entity types.
  * Structured for provider, patient, pharmacy, and payer surfaces + future integrations.
  */
 
@@ -10,6 +10,15 @@ import type {
   PriorAuthCase,
   WorkflowEngineEvent,
 } from "./benefits";
+import type { EncounterAgentRun } from "./agentic";
+import type {
+  AppealBundle,
+  ConnectorRun,
+  ExternalSyncCheckpoint,
+  RecoveryAction,
+  RecoveryCase,
+  SlaTimer,
+} from "./recovery";
 
 export type UUID = string;
 
@@ -518,4 +527,13 @@ export interface CareLoopSnapshot {
   priorAuthCases: PriorAuthCase[];
   /** Newest-first agentic / workflow engine log for the bottom dock */
   workflowEngineEvents: WorkflowEngineEvent[];
+  /** One persisted agentic finalize per appointment (demo proof / run report). */
+  encounterAgentRunsByAppointment: Record<UUID, EncounterAgentRun>;
+  /** Recovery control-plane entities (autonomous recovery mode). */
+  recoveryCases: RecoveryCase[];
+  recoveryActions: RecoveryAction[];
+  appealBundles: Record<UUID, AppealBundle>;
+  connectorRuns: ConnectorRun[];
+  externalSyncCheckpoints: ExternalSyncCheckpoint[];
+  slaTimers: SlaTimer[];
 }

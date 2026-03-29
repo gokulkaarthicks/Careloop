@@ -7,7 +7,7 @@ const SYSTEM = `You are a classifier for a clinical encounter chat (hackathon de
 Return JSON only: {"intent":"soap"|"plan"|"rx"|"search"}
 Rules:
 - soap: user wants SOAP note, clinical documentation, or dictation formatted as SOAP.
-- plan: user wants ONLY a treatment / care plan (not SOAP).
+- plan: user wants a treatment / care plan, OR gives follow-up / return-visit timing alone (e.g. "follow up in 3 days", "see patient in 2 weeks", "return in 10 days") — even if they do not say the words "treatment plan".
 - rx: user wants to prescribe, add a drug, or discusses prescription lines.
 - search: chart lookup, patient data questions, or unclear short query.
 If both SOAP and treatment content appear but user asks to document the visit as SOAP, choose soap.`;

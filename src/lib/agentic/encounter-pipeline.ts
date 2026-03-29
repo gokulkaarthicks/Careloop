@@ -4,11 +4,9 @@ import type {
   PaLineDecision,
   RunPipelineInput,
 } from "@/types/agentic";
-import { fetchAgenticCoverage } from "@/lib/agentic/coverage-fetch";
+import { fetchEncounterAgent } from "@/lib/agentic/encounter-agent-fetch";
 
 export type { RunPipelineInput } from "@/types/agentic";
-
-const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function buildSoapAddendum(
   patientName: string,
@@ -16,15 +14,22 @@ function buildSoapAddendum(
   coverage: AgenticEncounterResult["coverage"],
   opts: {
     documentationAddendum?: string;
+    toolLoopNarrative?: string;
   },
 ): string {
   const lines = [
     "",
     "---",
-    `Agentic encounter addendum (${new Date().toLocaleString()})`,
-    "Coverage adjudication: Grok benefits agent (structured JSON).",
+    `Encounter workflow addendum (${new Date().toLocaleString()})`,
+    "Coverage: end-to-end encounter agent (tools + adjudication).",
     `Benefits context: ${coverage.plan.name} (${coverage.plan.planCode})`,
   ];
+
+  if (opts.toolLoopNarrative?.trim()) {
+    lines.push(
+      `Encounter agent summary: ${opts.toolLoopNarrative.trim().slice(0, 600)}`,
+    );
+  }
 
   if (opts.documentationAddendum?.trim()) {
     lines.push(opts.documentationAddendum.trim());
@@ -61,38 +66,47 @@ function buildSoapAddendum(
   return lines.join("\n");
 }
 
+function truncate(s: string, n: number): string {
+  if (s.length <= n) return s;
+  return `${s.slice(0, n)}…`;
+}
+
 /**
- * Full agentic sequence for finalize: sense → decide → document → route (mock delays + server-side Grok coverage).
+ * End-to-end agentic finalize: single server orchestration (multi-turn tools + adjudication).
+ * Requires `XAI_API_KEY`. No separate linear coverage round-trip.
  */
 export async function runAgenticEncounterPipeline(
   input: RunPipelineInput,
   onStep: (step: AgentPipelineStep) => void,
 ): Promise<AgenticEncounterResult> {
   onStep({
-    agent: "Chart & history agent",
-    action: "Loading allergies, diagnoses, meds, and visit context…",
+    agent: "Care Orchestrator encounter agent",
+    action: "Running end-to-end tool loop (bounded tools + benefits adjudication)…",
   });
-  await delay(420);
-  const allergyHint =
-    input.clinical?.allergies?.length ?
-      input.clinical.allergies.map((a) => a.substance).join(", ")
-    : "NKDA";
+
+  const agent = await fetchEncounterAgent(input);
+
+  for (const row of agent.trace) {
+    onStep({
+      agent: `Tool · ${row.tool}`,
+      action:
+        row.ok ? truncate(row.detail ?? "", 160) : (row.error ?? "Tool failed"),
+    });
+  }
 
   onStep({
-    agent: "Eligibility & coverage agent",
-    action: "Calling agentic benefits adjudication (server)…",
-  });
-  await delay(200);
-
-  onStep({
-    agent: "Formulary check agent",
-    action: "Synthesizing per-line routing with coverage model…",
+    agent: "Care Orchestrator encounter agent",
+    action: "Composing SOAP addendum, timeline, and patient notification…",
   });
 
-  const agentic = await fetchAgenticCoverage(input);
-  const coverage = agentic.coverage;
-
-  await delay(220);
+  const coverage = agent.coverage;
+  const toolLoopTrace = agent.trace;
+  const toolLoopNarrative = agent.finalAssistantText;
+  const toolTimeline =
+    agent.timelineSuggestions?.map((t) => ({
+      title: t.title,
+      detail: t.detail,
+    })) ?? [];
 
   const paDecisions: PaLineDecision[] = coverage.lines.map((l) => ({
     drugName: l.drugName,
@@ -108,49 +122,34 @@ export async function runAgenticEncounterPipeline(
   const anyPaRequired =
     coverage.holdForPriorAuth || coverage.anyStepTherapyBlock;
 
-  onStep({
-    agent: "PA decision agent",
-    action: coverage.holdForPriorAuth ?
-      "Prior auth required — staging payer packet…"
-    : coverage.anyStepTherapyBlock ?
-      "Step therapy gate — hold transmit pending documentation…"
-    : "No PA barrier — routing to pharmacy routing agent…",
-  });
-  await delay(360);
-
-  onStep({
-    agent: "Documentation agent",
-    action: "Composing SOAP addendum with coverage rationale…",
-  });
-  await delay(400);
+  const allergyHint =
+    input.clinical?.allergies?.length ?
+      input.clinical.allergies.map((a) => a.substance).join(", ")
+    : "NKDA";
 
   const soapAddendum = buildSoapAddendum(
     input.patientDisplayName,
     paDecisions,
     coverage,
     {
-      documentationAddendum: agentic.documentationAddendum,
+      documentationAddendum: agent.documentationAddendum,
+      toolLoopNarrative,
     },
   );
 
-  onStep({
-    agent: "Pharmacy routing agent",
-    action: coverage.anyNetworkMismatch ?
-      "Flagging out-of-network / preferred pharmacy mismatch…"
-    : "Aligning e-Rx to selected pharmacy…",
-  });
-  await delay(320);
-
-  onStep({
-    agent: "Patient instruction agent",
-    action: "Drafting patient-facing status copy…",
-  });
-  await delay(280);
-
   const timelineEntries: AgenticEncounterResult["timelineEntries"] = [
+    ...toolTimeline,
+    ...(toolLoopTrace.length > 0 ?
+      [
+        {
+          title: "Encounter agent — tool trace",
+          detail: `${toolLoopTrace.length} call(s): ${toolLoopTrace.map((t) => t.tool).join(", ")}`,
+        },
+      ]
+    : []),
     {
-      title: "Agentic review complete",
-      detail: `Chart context loaded; allergies noted (${allergyHint.slice(0, 80)}). Benefits adjudication: Grok.`,
+      title: "Workflow review complete",
+      detail: `Chart context (${truncate(allergyHint, 80)}). Routing via end-to-end encounter agent.`,
     },
     {
       title: `Insurance checked — ${coverage.plan.name}`,
@@ -187,7 +186,7 @@ export async function runAgenticEncounterPipeline(
   ];
 
   const patientNotification =
-    agentic.patientNotification ??
+    agent.patientNotification ??
     (coverage.holdForPriorAuth ?
       {
         title: "Prior authorization in progress",
@@ -196,7 +195,7 @@ export async function runAgenticEncounterPipeline(
     : coverage.anyStepTherapyBlock ?
       {
         title: "More documentation may be needed",
-        body: "Your care team may need to confirm step therapy before sending certain medications. Watch for a message in CareLoop.",
+        body: "Your care team may need to confirm step therapy before sending certain medications. Watch for a message in Care Orchestrator.",
       }
     : {
         title: "Prescription on the way",
@@ -210,5 +209,7 @@ export async function runAgenticEncounterPipeline(
     coverage,
     timelineEntries,
     patientNotification,
+    toolLoopTrace,
+    toolLoopNarrative,
   };
 }

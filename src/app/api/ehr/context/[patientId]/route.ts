@@ -11,6 +11,7 @@ import {
 import * as schema from "@/lib/ehr/schema";
 import { eq } from "drizzle-orm";
 import { mapDbAppointmentToWorkflow } from "@/lib/ehr/map-to-workflow";
+import { buildSeedContextPayload } from "@/lib/ehr/seed-context-payload";
 import { SEED } from "@/lib/seed-data";
 
 export const runtime = "nodejs";
@@ -24,53 +25,21 @@ export async function GET(
   const appointmentId = url.searchParams.get("appointmentId");
 
   if (!ehrDatabaseConfigured()) {
-    const clinical = SEED.clinicalByPatientId[patientId];
-    const appts = SEED.appointments.filter((a) => a.patientId === patientId);
-    return NextResponse.json({
-      source: "seed",
-      patient: SEED.patients.find((p) => p.id === patientId) ?? null,
-      clinical: clinical ?? null,
-      appointments: appts,
-      compact: clinical
-        ? {
-            patientId,
-            mrn: SEED.patients.find((p) => p.id === patientId)?.mrn ?? "",
-            displayName:
-              SEED.patients.find((p) => p.id === patientId)?.displayName ?? "",
-            cohortTag: null,
-            problemSummary: clinical.diagnoses.map((d) => d.description).join("; "),
-            allergySummary:
-              clinical.allergies.length === 0
-                ? "NKDA"
-                : clinical.allergies.map((a) => a.substance).join("; "),
-            medicationSummary: clinical.medications
-              .map((m) => `${m.name} ${m.dose}`)
-              .join("; "),
-            labSummary: "See chart",
-            lastVisitLine: clinical.lastVisitDate
-              ? `Last chart activity ${clinical.lastVisitDate}`
-              : null,
-          }
-        : null,
-      timeline: [],
-      cachedChartSummary: SEED.aiSummaries[patientId] ?? null,
-      visitBriefing: clinical
-        ? {
-            briefingLines: [
-              "Visit focus: Primary care follow-up (seed)",
-              `Problems: ${clinical.diagnoses.map((d) => `${d.code} ${d.description}`).join("; ")}`,
-              `Allergies: ${clinical.allergies.length ? clinical.allergies.map((a) => a.substance).join("; ") : "NKDA"}`,
-              `Medications: ${clinical.medications.map((m) => `${m.name} ${m.dose}`).join("; ")}`,
-            ],
-          }
-        : null,
-    });
+    const payload = buildSeedContextPayload(patientId);
+    if (!payload) {
+      return NextResponse.json({ error: "Patient not found" }, { status: 404 });
+    }
+    return NextResponse.json(payload);
   }
 
   const db = getEhrDb();
   const patient = getPatientById(db, patientId);
   if (!patient) {
-    return NextResponse.json({ error: "Patient not found" }, { status: 404 });
+    const payload = buildSeedContextPayload(patientId);
+    if (!payload) {
+      return NextResponse.json({ error: "Patient not found" }, { status: 404 });
+    }
+    return NextResponse.json(payload);
   }
 
   const clinical = buildPatientClinicalSummary(db, patientId);
@@ -95,9 +64,25 @@ export async function GET(
     appointmentId ?? null,
   );
 
+  const seedP = SEED.patients.find((p) => p.id === patientId);
+  const patientOut =
+    seedP ?
+      {
+        ...seedP,
+        ...patient,
+        displayName: seedP.displayName,
+        mrn: seedP.mrn,
+        insurancePlanId: seedP.insurancePlanId,
+        coverageDemoTag: seedP.coverageDemoTag,
+        preferredPharmacyId: seedP.preferredPharmacyId ?? patient.preferredPharmacyId,
+        externalEhrPatientId: seedP.externalEhrPatientId ?? patient.externalEhrPatientId,
+        notes: seedP.notes ?? patient.notes,
+      }
+    : patient;
+
   return NextResponse.json({
     source: "ehr_sqlite",
-    patient,
+    patient: patientOut,
     clinical,
     appointments: apptRows.map(mapDbAppointmentToWorkflow),
     compact,

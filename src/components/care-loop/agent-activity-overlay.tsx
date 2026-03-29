@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { Button } from "@/components/ui/button";
 import { useCareWorkflowStore } from "@/stores/care-workflow-store";
 import { initialAgentActivity } from "@/types/agentic";
 import { cn } from "@/lib/utils";
@@ -14,12 +15,11 @@ export function AgentActivityOverlay() {
   const setAgentActivity = useCareWorkflowStore((s) => s.setAgentActivity);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  /** Success stays visible until the user dismisses (demo proof). Errors auto-clear. */
   useEffect(() => {
     if (!agentActivity.visible) return;
-    if (agentActivity.status !== "success" && agentActivity.status !== "error") {
-      return;
-    }
-    const delayMs = agentActivity.status === "error" ? 6000 : 2800;
+    if (agentActivity.status !== "error") return;
+    const delayMs = 8000;
     hideTimer.current = setTimeout(() => {
       setAgentActivity({
         ...initialAgentActivity,
@@ -64,7 +64,7 @@ export function AgentActivityOverlay() {
           </div>
           <div className="min-w-0 flex-1">
             <p className="text-[0.7rem] font-semibold uppercase tracking-wide text-muted-foreground">
-              Agentic workflow
+              Workflow
             </p>
             <p className="text-sm font-semibold leading-snug">{agentActivity.headline}</p>
             <p className="text-xs text-muted-foreground">{agentActivity.subline}</p>
@@ -76,9 +76,43 @@ export function AgentActivityOverlay() {
                   ))}
                 </ul>
               )}
+            {agentActivity.toolTrace &&
+              agentActivity.toolTrace.length > 0 &&
+              agentActivity.status === "success" && (
+                <ul className="mt-2 max-h-28 space-y-1 overflow-y-auto border-t border-border/60 pt-2 text-[0.65rem] leading-snug text-muted-foreground">
+                  <li className="font-medium text-foreground/80">Tool trace</li>
+                  {agentActivity.toolTrace.map((row, i) => (
+                    <li key={`${row.tool}-${i}`}>
+                      <span className="font-mono text-[0.6rem] text-primary">
+                        {row.tool}
+                      </span>
+                      {row.ok ?
+                        <span className="ml-1">
+                          →{" "}
+                          {(row.detail ?? "").slice(0, 120)}
+                          {(row.detail?.length ?? 0) > 120 ? "…" : ""}
+                        </span>
+                      : <span className="ml-1 text-destructive">{row.error}</span>}
+                    </li>
+                  ))}
+                </ul>
+              )}
             {agentActivity.errorMessage && (
               <p className="mt-1 text-xs text-destructive">{agentActivity.errorMessage}</p>
             )}
+            {agentActivity.status === "success" ?
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="mt-3 h-8 text-xs"
+                onClick={() =>
+                  setAgentActivity({ ...initialAgentActivity, visible: false })
+                }
+              >
+                Dismiss
+              </Button>
+            : null}
           </div>
         </div>
       </div>

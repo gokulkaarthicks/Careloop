@@ -29,7 +29,11 @@ import {
   computeMemberLoopMetrics,
   type MemberLoopMetrics,
 } from "@/lib/payer-analytics";
+import type { WorkflowEngineEvent } from "@/types/benefits";
 import { cn } from "@/lib/utils";
+
+const EMPTY_ENGINE_EVENTS: WorkflowEngineEvent[] = [];
+import { WorkflowRoleFeed } from "@/components/care-loop/workflow-role-feed";
 import { useCareWorkflowStore } from "@/stores/care-workflow-store";
 import {
   Activity,
@@ -66,6 +70,7 @@ function toneRing(tone: MemberLoopMetrics["careTone"]) {
 
 export default function PayerPage() {
   const snapshot = useCareWorkflowStore((s) => s.snapshot);
+  const engineEvents = snapshot.workflowEngineEvents ?? EMPTY_ENGINE_EVENTS;
   const payerMarkComplete = useCareWorkflowStore((s) => s.payerMarkComplete);
   const resolvePriorAuthCase = useCareWorkflowStore((s) => s.resolvePriorAuthCase);
   const payerProfile = snapshot.payers[0];
@@ -108,7 +113,6 @@ export default function PayerPage() {
   }, [snapshot.prescriptions]);
 
   const highAlerts = alerts.filter((a) => a.severity === "high").length;
-
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 pb-10">
       <CarePageHeader
@@ -120,6 +124,8 @@ export default function PayerPage() {
           Demo data
         </Badge>
       </CarePageHeader>
+
+      <WorkflowRoleFeed events={engineEvents} variant="payer" max={20} />
 
       <PanelCard
         title="Prior authorization queue (demo)"
@@ -445,46 +451,68 @@ export default function PayerPage() {
               <TableRow>
                 <TableHead>Member</TableHead>
                 <TableHead>Claim</TableHead>
+                <TableHead>Agent run</TableHead>
                 <TableHead>Amount</TableHead>
                 <TableHead className="text-right">Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {snapshot.payerStatuses.map((row) => {
-                const patient = snapshot.patients.find((p) => p.id === row.patientId);
-                return (
-                  <TableRow key={row.id}>
-                    <TableCell className="font-medium">
-                      {patient?.displayName ?? row.patientId}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{row.claimStatus}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      {row.paidAmountUsd != null ? (
-                        <span>${row.paidAmountUsd} paid</span>
-                      ) : row.authorizedAmountUsd != null ? (
-                        <span>${row.authorizedAmountUsd} auth</span>
-                      ) : (
-                        "-"
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        disabled={
-                          row.claimStatus === "paid" || row.claimStatus === "approved"
-                        }
-                        onClick={() => payerMarkComplete(row.id, "paid")}
-                      >
-                        <CheckCircle2 className="size-3.5" />
-                        Mark paid
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
+              {snapshot.payerStatuses.length === 0 ?
+                <TableRow>
+                  <TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">
+                    No claim stubs yet. Finalize a visit on{" "}
+                    <strong>Provider</strong> (after selecting a member in the header)
+                    to create a payer row for that encounter.
+                  </TableCell>
+                </TableRow>
+              : snapshot.payerStatuses.map((row) => {
+                  const patient = snapshot.patients.find((p) => p.id === row.patientId);
+                  const agentRun =
+                    row.appointmentId ?
+                      snapshot.encounterAgentRunsByAppointment[row.appointmentId]
+                    : undefined;
+                  return (
+                    <TableRow key={row.id}>
+                      <TableCell className="font-medium">
+                        {patient?.displayName ?? row.patientId}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline">{row.claimStatus}</Badge>
+                      </TableCell>
+                      <TableCell className="font-mono text-[0.7rem] text-muted-foreground">
+                        {agentRun ?
+                          <span title={agentRun.runId}>{agentRun.runId.slice(-14)}</span>
+                        : (
+                          "—"
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {row.paidAmountUsd != null ? (
+                          <span>${row.paidAmountUsd} paid</span>
+                        ) : row.authorizedAmountUsd != null ? (
+                          <span>${row.authorizedAmountUsd} auth</span>
+                        ) : (
+                          "—"
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          disabled={
+                            row.claimStatus === "paid" ||
+                            row.claimStatus === "approved"
+                          }
+                          onClick={() => payerMarkComplete(row.id, "paid")}
+                        >
+                          <CheckCircle2 className="size-3.5" />
+                          Mark paid
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
+              }
             </TableBody>
           </Table>
         </div>

@@ -1,4 +1,5 @@
 export { runJudgeDemo } from "./run-judge-demo";
+export type { RunJudgeDemoOptions } from "./run-judge-demo";
 export { captureDemoMetrics } from "./metrics";
 export type { DemoMetrics, JudgeDemoState, JudgeDemoStep } from "./types";
 export {

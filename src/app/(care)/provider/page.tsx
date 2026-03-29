@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { CarePageHeader } from "@/components/care-loop/care-page-header";
+import { EncounterRunReportDialog } from "@/components/care-loop/encounter-run-report-dialog";
 import { EncounterWorkspace } from "@/components/care-loop/encounter-workspace";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -9,9 +11,15 @@ import { buildPreVisitAgentInput } from "@/lib/agents/pre-visit-agent";
 import { fetchPreVisitOutput } from "@/lib/agents/pre-visit-fetch";
 import type { PreVisitAgentOutput } from "@/types/pre-visit-agent";
 import { runAgenticEncounterPipeline } from "@/lib/agentic/encounter-pipeline";
+import { exportSoapRunBundle } from "@/lib/schemas/soap-note";
 import { scheduleBackgroundPaPolicyResolution } from "@/lib/orchestration/background-pa-policy";
 import { useCareWorkflowStore } from "@/stores/care-workflow-store";
 import type { ChartInferenceReview, PrescriptionLine } from "@/types/workflow";
+import type { EncounterAgentRun } from "@/types/agentic";
+import {
+  newEncounterRunId,
+  outcomeLabelFromCoverage,
+} from "@/types/agentic";
 import { AlertTriangle } from "lucide-react";
 
 export default function ProviderPage() {
@@ -38,8 +46,11 @@ export default function ProviderPage() {
   const setChartInferenceForAppointment = useCareWorkflowStore(
     (s) => s.setChartInferenceForAppointment,
   );
-  const ehrVisitBriefingLines = useCareWorkflowStore(
-    (s) => s.ehrVisitBriefingLines[patientId],
+  const ehrVisitBriefingLines = useCareWorkflowStore((s) =>
+    patientId ? s.ehrVisitBriefingLines[patientId] : undefined,
+  );
+  const pushWorkflowEngineEvent = useCareWorkflowStore(
+    (s) => s.pushWorkflowEngineEvent,
   );
   const demoEncounterUnlockAt = useCareWorkflowStore(
     (s) => s.demoEncounterUnlockAt,
@@ -48,8 +59,11 @@ export default function ProviderPage() {
     (s) => s.clearDemoEncounterSchedule,
   );
 
-  const patient = snapshot.patients.find((p) => p.id === patientId);
-  const clinical = snapshot.clinicalByPatientId[patientId];
+  const patient = patientId
+    ? snapshot.patients.find((p) => p.id === patientId)
+    : undefined;
+  const clinical =
+    patientId ? snapshot.clinicalByPatientId[patientId] : undefined;
   const provider = snapshot.providers[0];
   const pharmacy = snapshot.pharmacies[0];
 
@@ -60,13 +74,15 @@ export default function ProviderPage() {
 
   const appointments = useMemo(
     () =>
-      snapshot.appointments
-        .filter((a) => a.patientId === patientId)
-        .sort(
-          (a, b) =>
-            new Date(a.scheduledFor).getTime() -
-            new Date(b.scheduledFor).getTime(),
-        ),
+      patientId ?
+        snapshot.appointments
+          .filter((a) => a.patientId === patientId)
+          .sort(
+            (a, b) =>
+              new Date(a.scheduledFor).getTime() -
+              new Date(b.scheduledFor).getTime(),
+          )
+      : [],
     [snapshot.appointments, patientId],
   );
 
@@ -77,14 +93,13 @@ export default function ProviderPage() {
 
   const priorEncounters = useMemo(
     () =>
-      snapshot.encounters
-        .filter((e) => e.patientId === patientId)
-        .sort(
-          (a, b) =>
-            (b.endedAt ?? b.createdAt).localeCompare(
-              a.endedAt ?? a.createdAt,
-            ),
-        ),
+      patientId ?
+        snapshot.encounters
+          .filter((e) => e.patientId === patientId)
+          .sort((a, b) =>
+            (b.endedAt ?? b.createdAt).localeCompare(a.endedAt ?? a.createdAt),
+          )
+      : [],
     [snapshot.encounters, patientId],
   );
 
@@ -128,6 +143,9 @@ export default function ProviderPage() {
   const [treatmentPlan, setTreatmentPlan] = useState("");
   const [rxLines, setRxLines] = useState<PrescriptionLine[]>([]);
   const [agenticFinalizing, setAgenticFinalizing] = useState(false);
+  const [runReportOpen, setRunReportOpen] = useState(false);
+  const [runReportData, setRunReportData] = useState<EncounterAgentRun | null>(null);
+  const [soapOpenSignal, setSoapOpenSignal] = useState(0);
 
   const draft = appt ? snapshot.providerVisitDrafts[appt.id] : undefined;
   const visitFinalized =
@@ -212,7 +230,8 @@ export default function ProviderPage() {
   ]);
 
   const handleFinalize = useCallback(async () => {
-    if (!appt || !provider || !pharmacy || !patient || visitFinalized) return;
+    if (!appt || !provider || !pharmacy || !patient || !patientId || visitFinalized)
+      return;
     if (!soapNote.trim() || !treatmentPlan.trim()) return;
     if (!rxLines.length || rxLines.some((l) => !l.drugName.trim())) return;
     if (agenticFinalizing) return;
@@ -225,6 +244,7 @@ export default function ProviderPage() {
       headline: "Orchestrator",
       subline: "Starting multi-agent encounter pipeline…",
       completedStepLabels: [],
+      toolTrace: [],
     });
 
     try {
@@ -239,6 +259,9 @@ export default function ProviderPage() {
           pharmacyId: pharmacy.id,
           insurancePlanId: patient.insurancePlanId,
           preferredPharmacyId: patient.preferredPharmacyId,
+          priorAuthCases: snapshot.priorAuthCases.filter(
+            (c) => c.patientId === patientId,
+          ),
         },
         (step) => {
           completed.push(`${step.agent}`);
@@ -254,6 +277,7 @@ export default function ProviderPage() {
 
       const mergedSoap = `${soapNote.trim()}\n${result.soapAddendum}`;
 
+      const runId = newEncounterRunId();
       finalizeEncounter({
         appointmentId: appt.id,
         patientId,
@@ -263,7 +287,62 @@ export default function ProviderPage() {
         treatmentPlan,
         prescriptionLines: rxLines,
         coverage: result.coverage,
+        agentRun: {
+          runId,
+          appointmentId: appt.id,
+          patientId,
+          tools: result.toolLoopTrace ?? [],
+          routingSummary: result.paDecisions,
+          soapAddendum: result.soapAddendum,
+          coveragePlanName: result.coverage.plan.name,
+          outcomeLabel: outcomeLabelFromCoverage({
+            holdForPriorAuth: result.coverage.holdForPriorAuth,
+            anyStepTherapyBlock: result.coverage.anyStepTherapyBlock,
+          }),
+          timelineEntryTitles: result.timelineEntries.map((e) => e.title),
+        },
       });
+
+      const persisted =
+        useCareWorkflowStore.getState().snapshot.encounterAgentRunsByAppointment[
+          appt.id
+        ] ?? null;
+      if (persisted) {
+        setRunReportData(persisted);
+        setRunReportOpen(true);
+      }
+
+      pushWorkflowEngineEvent({
+        kind: "encounter_agent_trace",
+        title: `Orchestrator run ${runId.slice(-14)}`,
+        detail: `Full run ID: ${runId}. Provider run report, Payer table, and Pharmacy badge share this ID.`,
+        patientId,
+        role: "system",
+      });
+
+      if (result.soapAddendum?.trim()) {
+        pushWorkflowEngineEvent({
+          kind: "encounter_agent_trace",
+          title: "Clinical documentation — SOAP addendum",
+          detail: result.soapAddendum.trim().slice(0, 620),
+          patientId,
+          role: "provider",
+        });
+      }
+
+      if (result.toolLoopTrace?.length) {
+        for (const row of result.toolLoopTrace) {
+          pushWorkflowEngineEvent({
+            kind: "encounter_agent_trace",
+            title: row.tool,
+            detail: row.ok ?
+              (row.detail ?? "").slice(0, 500)
+            : row.error,
+            patientId,
+            role: "system",
+          });
+        }
+      }
 
       const chartRes = await fetch("/api/ai/chart-inference", {
         method: "POST",
@@ -318,16 +397,18 @@ export default function ProviderPage() {
           "PA hold - payer must review before pharmacy release."
         : result.coverage.anyStepTherapyBlock ?
           "Step therapy gate - documentation required before transmit."
-        : "Pharmacy path cleared - e-Rx released per agentic coverage output.",
+        : "Pharmacy path cleared - e-Rx released per coverage output.",
         completedStepLabels: completed,
+        toolTrace: result.toolLoopTrace ?? [],
       });
     } catch (err) {
       setAgentActivity({
         visible: true,
         status: "error",
-        headline: "Agentic pipeline failed",
+        headline: "Workflow pipeline failed",
         subline: "Encounter was not finalized.",
         completedStepLabels: [],
+        toolTrace: [],
         errorMessage: err instanceof Error ? err.message : "Unknown error",
       });
     } finally {
@@ -351,6 +432,8 @@ export default function ProviderPage() {
     setSoapNote,
     clinical,
     setChartInferenceForAppointment,
+    snapshot.priorAuthCases,
+    pushWorkflowEngineEvent,
   ]);
 
   const canFinalize =
@@ -365,6 +448,10 @@ export default function ProviderPage() {
 
   const canEditDocs = !visitFinalized;
 
+  const storedAgentRun = useMemo(() => {
+    if (!appt?.id) return null;
+    return snapshot.encounterAgentRunsByAppointment[appt.id] ?? null;
+  }, [appt?.id, snapshot.encounterAgentRunsByAppointment]);
   useEffect(() => {
     const html = document.documentElement;
     const prevHtml = html.style.overflow;
@@ -399,26 +486,50 @@ export default function ProviderPage() {
         className="gap-2 border-b border-border/70 pb-3 sm:pb-4"
         eyebrow="Provider"
         title="Ambulatory encounter"
-        description="Chart context, chat-driven docs, e-prescribe - Finalize runs a Grok-backed agentic pipeline (coverage adjudication, routing, SOAP addendum) with a status overlay."
+        description="Chart context, chat-driven docs, e-prescribe - Finalize runs the workflow pipeline (coverage adjudication, routing, SOAP addendum) with a status overlay."
       >
         {appt && (
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Badge variant="neutral" className="text-[0.65rem] font-medium capitalize">
               {appt.priority}
             </Badge>
             <Badge variant="outline" className="text-[0.65rem] font-normal">
               {appt.ownerRole}
             </Badge>
+            {visitFinalized && storedAgentRun ?
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="h-8 text-xs"
+                onClick={() => {
+                  setRunReportData(storedAgentRun);
+                  setRunReportOpen(true);
+                }}
+              >
+                View agent run report
+              </Button>
+            : null}
           </div>
         )}
       </CarePageHeader>
 
-      {!appt && (
+      {!patient && (
+        <Alert>
+          <AlertTitle>Select a patient</AlertTitle>
+          <AlertDescription className="text-xs">
+            Choose a member in the header to load chart context and the encounter
+            workspace. Nothing is pre-selected by default.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {patient && !appt && (
         <Alert>
           <AlertTitle>No upcoming encounter in workflow</AlertTitle>
           <AlertDescription className="text-xs">
-            Pick a patient with a future appointment, or use Dashboard
-            &quot;Schedule in 30s&quot; to open the visit.
+            This member needs a scheduled visit, or use Dashboard &quot;Schedule in
+            30s&quot; to open the scripted demo encounter.
           </AlertDescription>
         </Alert>
       )}
@@ -452,10 +563,37 @@ export default function ProviderPage() {
       )}
       </div>
 
+      <EncounterRunReportDialog
+        open={runReportOpen}
+        onOpenChange={setRunReportOpen}
+        run={runReportData}
+        patientDisplayName={patient?.displayName}
+        onOpenSoap={() => {
+          setRunReportOpen(false);
+          setSoapOpenSignal((n) => n + 1);
+        }}
+        onExportJson={() => {
+          if (!runReportData) return;
+          const bundle = exportSoapRunBundle({
+            encounterAgentRun: runReportData,
+            soapNoteFullText: soapNote,
+          });
+          const blob = new Blob([JSON.stringify(bundle, null, 2)], {
+            type: "application/json",
+          });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `care-orchestrator-agent-run-${runReportData.runId}.json`;
+          a.click();
+          URL.revokeObjectURL(url);
+        }}
+      />
+
       {patient && (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <EncounterWorkspace
-            patientId={patientId}
+            patientId={patient.id}
             patient={patient}
             clinical={clinical ?? null}
             briefingLines={ehrVisitBriefingLines ?? null}
@@ -478,6 +616,7 @@ export default function ProviderPage() {
             }
             canStartEncounter={!!appt && appt.status === "scheduled"}
             nextAction={appt?.nextAction ?? null}
+            soapOpenSignal={soapOpenSignal}
           />
         </div>
       )}

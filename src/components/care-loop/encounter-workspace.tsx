@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,7 +19,10 @@ import {
 import { cn } from "@/lib/utils";
 import { fetchEncounterIntent } from "@/lib/encounter-intent-remote";
 import { extractMedicationFromPrescribePrompt } from "@/lib/prescribe-prompt";
-import { DEMO_TREATMENT_PLAN } from "@/lib/demo/canned-plan";
+import {
+  hasFollowUpTimingHint,
+  mergeTreatmentPlanFromMessage,
+} from "@/lib/demo/canned-plan";
 import type { Patient, Appointment } from "@/types/workflow";
 import type { PatientClinicalSummary } from "@/types/workflow";
 import type { PrescriptionLine } from "@/types/workflow";
@@ -63,6 +67,8 @@ type Props = {
   canStartEncounter?: boolean;
   /** Workflow hint (kept inside the card so the page shell stays fixed-height). */
   nextAction?: string | null;
+  /** Increment to programmatically open the SOAP dialog (e.g. from run report). */
+  soapOpenSignal?: number;
 };
 
 function truncateList(
@@ -81,6 +87,17 @@ function formatBriefingLines(lines: string[]): string {
     .slice(0, 12)
     .map((line) => (line.length > 280 ? `${line.slice(0, 280)}…` : line))
     .join("\n");
+}
+
+/** Split provider draft from agentic block (merged at finalize). */
+function splitSoapNote(note: string): { draft: string; addendum: string | null } {
+  const marker = "\n---\n";
+  const i = note.indexOf(marker);
+  if (i === -1) return { draft: note, addendum: null };
+  return {
+    draft: note.slice(0, i).trimEnd(),
+    addendum: note.slice(i + marker.length).trim(),
+  };
 }
 
 export function EncounterWorkspace({
@@ -103,7 +120,11 @@ export function EncounterWorkspace({
   onStartEncounter,
   canStartEncounter,
   nextAction = null,
+  soapOpenSignal = 0,
 }: Props) {
+  /** When true, documentation fields are read-only; dialogs should still open so the user can review (e.g. agentic SOAP addendum). */
+  const docsLocked = visitFinalized || !canEditDocs;
+
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [pending, setPending] = useState(false);
@@ -119,6 +140,10 @@ export function EncounterWorkspace({
     sig: "",
   });
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (soapOpenSignal > 0) setSoapEditOpen(true);
+  }, [soapOpenSignal]);
   /** Per-patient chat threads so switching patients preserves each conversation. */
   const encounterThreadsRef = useRef<Record<string, ChatMessage[]>>({});
   const lastPatientIdRef = useRef<string | null>(null);
@@ -386,13 +411,15 @@ export function EncounterWorkspace({
           ]);
         }
       } else if (intent.kind === "draft_plan") {
-        onPlanChange(DEMO_TREATMENT_PLAN);
+        onPlanChange(mergeTreatmentPlanFromMessage(treatmentPlan, q));
         setMessages((m) => [
           ...m,
           {
             id: `a_${Date.now()}`,
             role: "assistant",
-            body: "Treatment plan draft placed - open Plan below to review or edit.",
+            body: hasFollowUpTimingHint(q) ?
+              "Treatment plan updated with your follow-up timing — open Plan below to review or edit."
+            : "Treatment plan draft placed — open Plan below to review or edit.",
             meta: "Documentation",
           },
         ]);
@@ -405,6 +432,22 @@ export function EncounterWorkspace({
             role: "assistant",
             body: "Use the prescription dialog to enter medication, strength, quantity, refills, and sig.",
             meta: "e-Prescribe (demo)",
+          },
+        ]);
+      } else if (
+        intent.kind === "chart_search" &&
+        hasFollowUpTimingHint(q) &&
+        q.length < 200
+      ) {
+        onPlanChange(mergeTreatmentPlanFromMessage(treatmentPlan, q));
+        setMessages((m) => [
+          ...m,
+          {
+            id: `a_${Date.now()}`,
+            role: "assistant",
+            body:
+              "Updated follow-up timing in your treatment plan (from your message). Open Plan to review.",
+            meta: "Documentation",
           },
         ]);
       } else {
@@ -441,6 +484,7 @@ export function EncounterWorkspace({
     patient,
     runSoapLlm,
     openRxDialogFromPrompt,
+    treatmentPlan,
   ]);
 
   return (
@@ -468,7 +512,7 @@ export function EncounterWorkspace({
                   setRxDraft((d) => ({ ...d, drugName: e.target.value }))
                 }
                 placeholder="e.g. Lisinopril"
-                disabled={visitFinalized || !canEditDocs}
+                disabled={docsLocked}
               />
             </div>
             <div className="grid grid-cols-2 gap-2">
@@ -481,7 +525,7 @@ export function EncounterWorkspace({
                     setRxDraft((d) => ({ ...d, strength: e.target.value }))
                   }
                   placeholder="10 mg"
-                  disabled={visitFinalized || !canEditDocs}
+                  disabled={docsLocked}
                 />
               </div>
               <div className="space-y-1">
@@ -492,7 +536,7 @@ export function EncounterWorkspace({
                   onChange={(e) =>
                     setRxDraft((d) => ({ ...d, quantity: e.target.value }))
                   }
-                  disabled={visitFinalized || !canEditDocs}
+                  disabled={docsLocked}
                 />
               </div>
             </div>
@@ -505,7 +549,7 @@ export function EncounterWorkspace({
                 onChange={(e) =>
                   setRxDraft((d) => ({ ...d, refills: e.target.value }))
                 }
-                disabled={visitFinalized || !canEditDocs}
+                disabled={docsLocked}
               />
             </div>
             <div className="space-y-1">
@@ -517,7 +561,7 @@ export function EncounterWorkspace({
                   setRxDraft((d) => ({ ...d, sig: e.target.value }))
                 }
                 placeholder="Directions"
-                disabled={visitFinalized || !canEditDocs}
+                disabled={docsLocked}
               />
             </div>
           </div>
@@ -532,11 +576,7 @@ export function EncounterWorkspace({
             <Button
               type="button"
               onClick={addRxLineFromDialog}
-              disabled={
-                visitFinalized ||
-                !canEditDocs ||
-                !rxDraft.drugName.trim()
-              }
+              disabled={docsLocked || !rxDraft.drugName.trim()}
             >
               Add to encounter
             </Button>
@@ -552,24 +592,61 @@ export function EncounterWorkspace({
               SOAP note
             </DialogTitle>
             <DialogDescription>
-              Subjective · Objective · Assessment · Plan
+              Subjective · Objective · Assessment · Plan. After{" "}
+              <strong>Finalize encounter</strong>, scroll to the bottom — the agent appends a
+              labeled addendum (coverage + routing), not a full SOAP rewrite.
             </DialogDescription>
           </DialogHeader>
-          <Textarea
-            className="min-h-[200px] font-mono text-xs"
-            value={soapNote}
-            onChange={(e) => onSoapChange(e.target.value)}
-            disabled={visitFinalized || !canEditDocs}
-            spellCheck={false}
-            placeholder="S: … O: … A: … P: …"
-          />
+          {docsLocked ?
+            <Alert className="border-amber-500/35 bg-amber-500/[0.06]">
+              <AlertDescription className="text-xs leading-relaxed text-foreground">
+                Read-only — signed note. The <strong>encounter addendum</strong> appears in
+                the highlighted section below when present.
+              </AlertDescription>
+            </Alert>
+          : null}
+          {(() => {
+            const parts = splitSoapNote(soapNote);
+            if (docsLocked && parts.addendum) {
+              return (
+                <div className="space-y-3">
+                  <div>
+                    <p className="mb-1 text-[0.65rem] font-medium uppercase tracking-wide text-muted-foreground">
+                      Clinical draft
+                    </p>
+                    <pre className="max-h-[min(40vh,280px)] min-h-[100px] overflow-auto rounded-md border border-border/60 bg-muted/20 p-3 font-mono text-xs leading-relaxed">
+                      {parts.draft || "—"}
+                    </pre>
+                  </div>
+                  <div className="rounded-lg border border-amber-500/40 bg-amber-500/[0.07] p-3 dark:bg-amber-500/[0.09]">
+                    <p className="mb-2 text-[0.65rem] font-semibold uppercase tracking-wide text-amber-900 dark:text-amber-100">
+                      Encounter addendum
+                    </p>
+                    <pre className="max-h-[min(45vh,320px)] overflow-auto font-mono text-xs leading-relaxed text-foreground">
+                      {parts.addendum}
+                    </pre>
+                  </div>
+                </div>
+              );
+            }
+            return (
+              <Textarea
+                className="min-h-[240px] font-mono text-xs"
+                value={soapNote}
+                onChange={(e) => onSoapChange(e.target.value)}
+                disabled={docsLocked}
+                spellCheck={false}
+                placeholder="S: … O: … A: … P: …"
+              />
+            );
+          })()}
           <DialogFooter className="flex-col gap-2 border-t border-border/60 pt-3 sm:flex-row sm:justify-between">
             <div className="flex flex-wrap gap-2">
               <Button
                 type="button"
                 variant="secondary"
                 size="sm"
-                disabled={visitFinalized || !canEditDocs || !soapNote.trim()}
+                disabled={docsLocked || !soapNote.trim()}
                 onClick={() => queueSoapHandoff("payer")}
               >
                 Send to payer (demo)
@@ -578,7 +655,7 @@ export function EncounterWorkspace({
                 type="button"
                 variant="secondary"
                 size="sm"
-                disabled={visitFinalized || !canEditDocs || !soapNote.trim()}
+                disabled={docsLocked || !soapNote.trim()}
                 onClick={() => queueSoapHandoff("provider")}
               >
                 Send to provider (demo)
@@ -599,9 +676,9 @@ export function EncounterWorkspace({
               Treatment plan
             </DialogTitle>
             <DialogDescription className="text-xs leading-relaxed">
-              Goals, meds, education, follow-up. The plan updates when you ask for a
-              &quot;treatment plan&quot; in the encounter chat (demo inserts a draft), when you edit
-              here, or when a saved visit draft is loaded. Finalize writes it to the encounter
+              Goals, meds, education, follow-up. The plan updates when you describe follow-up timing
+              or ask for a plan in chat (draft merges your wording), when you edit here, or when a
+              saved visit draft is loaded. Finalize writes it to the encounter
               record.
             </DialogDescription>
           </DialogHeader>
@@ -609,7 +686,7 @@ export function EncounterWorkspace({
             className="min-h-[180px] text-xs"
             value={treatmentPlan}
             onChange={(e) => onPlanChange(e.target.value)}
-            disabled={visitFinalized || !canEditDocs}
+            disabled={docsLocked}
           />
           <DialogFooter>
             <Button type="button" onClick={() => setPlanEditOpen(false)}>
@@ -635,7 +712,7 @@ export function EncounterWorkspace({
                 variant="outline"
                 size="sm"
                 className="h-8 gap-1 text-[0.7rem]"
-                disabled={visitFinalized || !canEditDocs}
+                disabled={docsLocked}
                 onClick={() => setRxDialogOpen(true)}
               >
                 <Plus className="size-3.5" />
@@ -659,7 +736,7 @@ export function EncounterWorkspace({
                       variant="ghost"
                       size="icon"
                       className="size-7 text-muted-foreground"
-                      disabled={visitFinalized || !canEditDocs}
+                      disabled={docsLocked}
                       onClick={() =>
                         onRxLinesChange(rxLines.filter((_, i) => i !== idx))
                       }
@@ -679,7 +756,7 @@ export function EncounterWorkspace({
                           next[idx] = { ...line, drugName: e.target.value };
                           onRxLinesChange(next);
                         }}
-                        disabled={visitFinalized || !canEditDocs}
+                        disabled={docsLocked}
                       />
                     </div>
                     <div className="space-y-1">
@@ -692,7 +769,7 @@ export function EncounterWorkspace({
                           next[idx] = { ...line, strength: e.target.value };
                           onRxLinesChange(next);
                         }}
-                        disabled={visitFinalized || !canEditDocs}
+                        disabled={docsLocked}
                       />
                     </div>
                     <div className="space-y-1">
@@ -705,7 +782,7 @@ export function EncounterWorkspace({
                           next[idx] = { ...line, quantity: e.target.value };
                           onRxLinesChange(next);
                         }}
-                        disabled={visitFinalized || !canEditDocs}
+                        disabled={docsLocked}
                       />
                     </div>
                     <div className="space-y-1">
@@ -722,7 +799,7 @@ export function EncounterWorkspace({
                           };
                           onRxLinesChange(next);
                         }}
-                        disabled={visitFinalized || !canEditDocs}
+                        disabled={docsLocked}
                       />
                     </div>
                   </div>
@@ -736,7 +813,7 @@ export function EncounterWorkspace({
                         next[idx] = { ...line, sig: e.target.value };
                         onRxLinesChange(next);
                       }}
-                      disabled={visitFinalized || !canEditDocs}
+                      disabled={docsLocked}
                     />
                   </div>
                 </div>
@@ -880,7 +957,7 @@ export function EncounterWorkspace({
               variant={soapNote.trim() ? "default" : "outline"}
               size="sm"
               className="h-9 gap-1.5 px-2.5 text-xs"
-              disabled={visitFinalized || !canEditDocs}
+              disabled={disabled}
               onClick={() => setSoapEditOpen(true)}
               aria-label="SOAP note"
               title="SOAP note"
@@ -893,7 +970,7 @@ export function EncounterWorkspace({
               variant={treatmentPlan.trim() ? "default" : "outline"}
               size="sm"
               className="h-9 gap-1.5 px-2.5 text-xs"
-              disabled={visitFinalized || !canEditDocs}
+              disabled={disabled}
               onClick={() => setPlanEditOpen(true)}
               aria-label="Treatment plan"
               title="Treatment plan"
@@ -906,7 +983,7 @@ export function EncounterWorkspace({
               variant={rxLines.length > 0 ? "default" : "outline"}
               size="sm"
               className="h-9 gap-1.5 px-2.5 text-xs"
-              disabled={visitFinalized || !canEditDocs}
+              disabled={disabled}
               onClick={() => setRxListOpen(true)}
               aria-label="Prescriptions"
               title="Prescriptions"

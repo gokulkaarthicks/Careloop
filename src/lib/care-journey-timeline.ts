@@ -59,9 +59,10 @@ function orderForRx(snapshot: CareLoopSnapshot, prescriptionId: UUID | undefined
  */
 export function buildCareJourneySteps(
   snapshot: CareLoopSnapshot,
-  patientId: UUID,
+  patientId: UUID | null,
   appointmentId: UUID | null,
 ): CareJourneyStep[] {
+  if (!patientId) return [];
   const appt = primaryAppointment(snapshot, patientId, appointmentId);
   if (!appt) {
     return [];
@@ -179,11 +180,12 @@ const MS_DAY = 86400000;
  */
 export function buildCareNotificationBanners(
   snapshot: CareLoopSnapshot,
-  patientId: UUID,
+  patientId: UUID | null,
   appointmentId: UUID | null,
   nowMs: number = Date.now(),
 ): CareNotificationBanner[] {
   const out: CareNotificationBanner[] = [];
+  if (!patientId) return out;
   const appt = primaryAppointment(snapshot, patientId, appointmentId);
   if (!appt) return out;
 
