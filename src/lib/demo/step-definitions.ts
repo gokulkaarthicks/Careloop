@@ -16,7 +16,7 @@ export const JUDGE_DEMO_STEP_DEFS = [
   { id: "patient_checkin", label: "Patient: pickup/adherence/check-in actions" },
   { id: "timefast", label: "Time jump: trigger overdue follow-up + auto-reschedule" },
   { id: "paopen", label: "Worst case: force PA denial to trigger recovery workflow" },
-  { id: "recovery", label: "Recovery: Autonomous case + PA Auto-Fighter + appeal submit" },
+  { id: "recovery", label: "Recovery: Autonomous case + PA Appeals Navigator + appeal submit" },
   { id: "dashboard", label: "Dashboard: show end-to-end progress and command center state" },
 ] as const;
 

@@ -3,7 +3,7 @@
 import { DEMO_RX_LINES, DEMO_SOAP_NOTE, DEMO_TREATMENT_PLAN } from "@/lib/demo/canned-plan";
 import { captureDemoMetrics } from "@/lib/demo/metrics";
 import { buildJudgeDemoSteps, JUDGE_DEMO_STEP_DEFS } from "@/lib/demo/step-definitions";
-import { runPaAutoFighter } from "@/lib/recovery/pa-auto-fighter";
+import { runPaAppealsNavigator } from "@/lib/recovery/pa-auto-fighter";
 import { runRecoveryAutopilot } from "@/lib/recovery/recovery-orchestrator";
 import { runCareLoopWorkflow } from "@/lib/orchestration/run-care-loop-workflow";
 import { runCentralOrchestratorAgent } from "@/lib/orchestration/central-orchestrator-agent";
@@ -614,8 +614,8 @@ export async function runJudgeDemo(
             (c) => c.patientId === base.patientId && c.failureKind.startsWith("pa_"),
           );
           if (rc) {
-            await runPaAutoFighter(rc);
-            await runPaAutoFighter(rc);
+            await runPaAppealsNavigator(rc);
+            await runPaAppealsNavigator(rc);
             useCareWorkflowStore.getState().pushWorkflowEngineEvent({
               kind: "appeal_status_updated",
               title: "Pitch demo: appeal and re-appeal monitoring active",

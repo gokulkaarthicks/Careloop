@@ -81,7 +81,9 @@ function buildAppealBundle(args: GenerateAppealArgs): AppealBundle {
   };
 }
 
-export async function runPaAutoFighter(recoveryCase: RecoveryCase): Promise<AppealBundle> {
+export async function runPaAppealsNavigator(
+  recoveryCase: RecoveryCase,
+): Promise<AppealBundle> {
   const store = useCareWorkflowStore.getState();
   const bundle = buildAppealBundle({ recoveryCase });
   store.saveAppealBundle(bundle);
@@ -97,7 +99,7 @@ export async function runPaAutoFighter(recoveryCase: RecoveryCase): Promise<Appe
   });
   store.pushWorkflowEngineEvent({
     kind: "appeal_generated",
-    title: "PA Auto-Fighter generated appeal package",
+    title: "PA Appeals Navigator generated appeal package",
     detail: `${bundle.pdfFileName} ready for review and submission.`,
     trigger: "Recovery planner detected PA denial",
     decision: "Generate appeal letter + supporting checklist",

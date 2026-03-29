@@ -1,4 +1,4 @@
-import { runPaAutoFighter } from "@/lib/recovery/pa-auto-fighter";
+import { runPaAppealsNavigator } from "@/lib/recovery/pa-auto-fighter";
 import { useCareWorkflowStore } from "@/stores/care-workflow-store";
 import type { RecoveryCase, RecoveryFailureKind } from "@/types/recovery";
 
@@ -141,7 +141,7 @@ export async function runRecoveryAutopilot(patientId?: string): Promise<void> {
 
     store.updateRecoveryCaseStatus(recovery.id, "executing");
     if (recovery.failureKind === "pa_denied" || recovery.failureKind === "pa_more_info_needed") {
-      await runPaAutoFighter(recovery);
+      await runPaAppealsNavigator(recovery);
     } else {
       store.appendRecoveryAction({
         recoveryCaseId: recovery.id,
