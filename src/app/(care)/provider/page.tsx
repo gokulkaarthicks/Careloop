@@ -315,10 +315,10 @@ export default function ProviderPage() {
         status: "success",
         headline: "Encounter agents complete",
         subline: result.coverage.holdForPriorAuth ?
-          "PA hold — payer must review before pharmacy release."
+          "PA hold - payer must review before pharmacy release."
         : result.coverage.anyStepTherapyBlock ?
-          "Step therapy gate — documentation required before transmit."
-        : "Pharmacy path cleared — e-Rx released per agentic coverage output.",
+          "Step therapy gate - documentation required before transmit."
+        : "Pharmacy path cleared - e-Rx released per agentic coverage output.",
         completedStepLabels: completed,
       });
     } catch (err) {
@@ -399,7 +399,7 @@ export default function ProviderPage() {
         className="gap-2 border-b border-border/70 pb-3 sm:pb-4"
         eyebrow="Provider"
         title="Ambulatory encounter"
-        description="Chart context, chat-driven docs, e-prescribe — Finalize runs a Grok-backed agentic pipeline (coverage adjudication, routing, SOAP addendum) with a status overlay."
+        description="Chart context, chat-driven docs, e-prescribe - Finalize runs a Grok-backed agentic pipeline (coverage adjudication, routing, SOAP addendum) with a status overlay."
       >
         {appt && (
           <div className="flex flex-wrap gap-2">

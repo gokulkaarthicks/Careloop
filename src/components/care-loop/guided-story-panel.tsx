@@ -139,7 +139,7 @@ export function GuidedStoryPanel({ className }: { className?: string }) {
           <p className="text-label mb-1">Next beat</p>
           {complete ? (
             <p className="text-sm text-muted-foreground">
-              Full loop finished. Open Provider, Patient, Pharmacy, and Payer — state is
+              Full loop finished. Open Provider, Patient, Pharmacy, and Payer - state is
               synced. Use <strong className="font-medium text-foreground">Restart + cohort</strong>{" "}
               to run again from a clean slate.
             </p>

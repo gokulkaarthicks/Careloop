@@ -8,28 +8,42 @@ import {
   Activity,
   ArrowRight,
   BarChart3,
-  Link2,
+  Heart,
   Pill,
+  ShieldCheck,
   Sparkles,
   Stethoscope,
   Users,
 } from "lucide-react";
 
-const benefits = [
+const personas = [
   {
-    title: "Prepare visits faster",
-    body: "AI turns scattered records into a short brief—so you walk in knowing what to ask and what to watch for.",
-    icon: Sparkles,
+    role: "Provider",
+    icon: Stethoscope,
+    headline: "Walk in prepared. Leave with the loop closed.",
+    body: "AI-generated chart summaries surface risks before the visit. Draft SOAP notes and sign prescriptions in one step - no tab switching.",
+    accent: "text-blue-600 bg-blue-500/10",
   },
   {
-    title: "Close care gaps after the visit",
-    body: "Prescriptions, reminders, and pickup stay on one thread—fewer dropped handoffs between clinic, pharmacy, and patient.",
-    icon: Link2,
+    role: "Patient",
+    icon: Heart,
+    headline: "Know what happened. Stay on track.",
+    body: "Plain-language visit recaps, medication reminders, and one-tap check-ins keep you connected to your care team between visits.",
+    accent: "text-rose-600 bg-rose-500/10",
   },
   {
-    title: "Measure completion across stakeholders",
-    body: "One view of whether each party did their part—so value-based programs can see the full picture, not just a claim.",
-    icon: BarChart3,
+    role: "Pharmacy",
+    icon: Pill,
+    headline: "Orders arrive the moment they're signed.",
+    body: "No fax, no phone tag. Real-time Rx handoff with full patient context - mark orders ready and the patient's loop updates instantly.",
+    accent: "text-teal-600 bg-teal-500/10",
+  },
+  {
+    role: "Payer",
+    icon: ShieldCheck,
+    headline: "Closure metrics before the claim lands.",
+    body: "VBC programs pay for outcomes, not volume. Track fill rates, adherence, and visit completion scores in real time - proof of care delivery that value-based contracts actually reward.",
+    accent: "text-violet-600 bg-violet-500/10",
   },
 ] as const;
 
@@ -51,7 +65,7 @@ function WorkflowIllustration({ className }: { className?: string }) {
       )}
     >
       <p className="text-label mb-2 text-center text-[0.6rem] sm:mb-3 sm:text-[0.65rem]">
-        How it flows — one loop, shared state
+        How it flows - one loop, shared state
       </p>
       <div className="flex flex-wrap items-center justify-center gap-x-0 gap-y-3 px-1 sm:flex-nowrap sm:gap-y-0 sm:px-2">
         {steps.map((s, i) => (
@@ -75,7 +89,7 @@ function WorkflowIllustration({ className }: { className?: string }) {
         ))}
       </div>
       <p className="mx-auto mt-2 max-w-lg px-1 text-center text-[0.6rem] leading-snug text-muted-foreground sm:mt-3 sm:text-[0.65rem] md:text-xs">
-        Not five separate tools — one demo where provider, patient, pharmacy, and payer screens all
+        Not five separate tools - one demo where provider, patient, pharmacy, and payer screens all
         update together.
       </p>
     </div>
@@ -99,12 +113,14 @@ export function CareLoopLanding() {
     <div className="care-canvas flex h-[100dvh] w-full min-h-0 flex-col overflow-hidden">
       <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col px-4 py-4 sm:px-6 sm:py-5 md:px-8">
         <header className="shrink-0 text-center">
-          <p className="text-label mb-1.5 text-[0.6rem] sm:mb-2 sm:text-[0.65rem]">Hackathon prototype</p>
-          <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl md:text-[2.75rem] md:leading-tight">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/8 px-3 py-1 text-[0.65rem] font-medium text-primary sm:text-xs">
+            Built for Value-Based Care (VBC)
+          </span>
+          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl md:text-[2.75rem] md:leading-tight">
             CareLoop AI
           </h1>
           <p className="mx-auto mt-2 max-w-2xl px-1 text-sm font-medium leading-snug text-foreground sm:mt-3 sm:text-base md:text-lg">
-            Connect prep, prescribing, fulfillment, and proof—in one live system instead of four
+            Connect prep, prescribing, fulfillment, and proof-in one live system instead of four
             disconnected tools.
           </p>
           <div className="mt-4 flex flex-wrap items-center justify-center gap-2 sm:mt-5 sm:gap-3">
@@ -139,17 +155,24 @@ export function CareLoopLanding() {
             Why it matters
           </h2>
           <p className="mx-auto mt-0.5 max-w-lg text-center text-[0.65rem] text-muted-foreground sm:text-xs">
-            Plain language — no clinical jargon required to get the idea.
+            One platform. Every stakeholder gets exactly what they need.
           </p>
-          <ul className="mt-2 grid min-h-0 flex-1 grid-cols-1 gap-2 sm:mt-3 sm:grid-cols-3 sm:gap-3 md:gap-4">
-            {benefits.map(({ title, body, icon: Icon }) => (
-              <li key={title} className="min-h-0">
+          <ul className="mt-2 grid min-h-0 flex-1 grid-cols-2 gap-2 sm:mt-3 sm:grid-cols-4 sm:gap-3 md:gap-4">
+            {personas.map(({ role, icon: Icon, headline, body, accent }) => (
+              <li key={role} className="min-h-0">
                 <Card className="h-full border-border/80 shadow-care-card">
-                  <CardContent className="flex flex-col gap-1.5 p-3 pt-4 sm:gap-2 sm:p-4 sm:pt-5">
-                    <span className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary sm:size-9">
-                      <Icon className="size-4 sm:size-[1.1rem]" aria-hidden />
-                    </span>
-                    <h3 className="text-xs font-semibold leading-snug text-foreground sm:text-sm">{title}</h3>
+                  <CardContent className="flex h-full flex-col gap-2 p-3 pt-4 sm:p-4 sm:pt-5">
+                    <div className="flex items-center gap-2">
+                      <span className={`flex size-8 shrink-0 items-center justify-center rounded-lg sm:size-9 ${accent}`}>
+                        <Icon className="size-4 sm:size-[1.1rem]" aria-hidden />
+                      </span>
+                      <p className="text-[0.65rem] font-bold uppercase tracking-widest text-muted-foreground sm:text-[0.7rem]">
+                        {role}
+                      </p>
+                    </div>
+                    <h3 className="text-xs font-semibold leading-snug text-foreground sm:text-sm">
+                      {headline}
+                    </h3>
                     <p className="line-clamp-4 text-[0.65rem] leading-relaxed text-muted-foreground sm:line-clamp-none sm:text-xs">
                       {body}
                     </p>

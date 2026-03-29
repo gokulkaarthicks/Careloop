@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 
 /**
- * Consistent page chrome for care surfaces — eyebrow, title, optional actions.
+ * Consistent page chrome for care surfaces - eyebrow, title, optional actions.
  */
 export function CarePageHeader({
   eyebrow,

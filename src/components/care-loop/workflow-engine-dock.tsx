@@ -20,7 +20,7 @@ function kindLabel(kind: string): string {
 }
 
 /**
- * Persistent glass-style workflow strip — live agentic events + optional primary action (Provider finalize).
+ * Persistent glass-style workflow strip - live agentic events + optional primary action (Provider finalize).
  */
 export function WorkflowEngineDock() {
   const events = useCareWorkflowStore(
@@ -69,7 +69,7 @@ export function WorkflowEngineDock() {
               </Badge>
             : (
               <Badge variant="outline" className="font-normal text-muted-foreground">
-                Idle — events append on finalize / PA / pharmacy
+                Idle - events append on finalize / PA / pharmacy
               </Badge>
             )}
             {showPrimary ?
@@ -94,7 +94,7 @@ export function WorkflowEngineDock() {
               {events.length === 0 ?
                 <li className="px-2 py-6 text-center text-muted-foreground">
                   <Bot className="mx-auto mb-2 size-6 opacity-40" />
-                  No engine events yet — finalize an encounter or resolve a PA on the
+                  No engine events yet - finalize an encounter or resolve a PA on the
                   Payer tab.
                 </li>
               : events.slice(0, 24).map((e) => (

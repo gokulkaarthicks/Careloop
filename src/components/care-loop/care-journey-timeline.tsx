@@ -89,7 +89,7 @@ export function CareJourneyTimeline({ className }: { className?: string }) {
         <CardHeader className="pb-2">
           <CardTitle className="text-base font-semibold">Care journey</CardTitle>
           <CardDescription className="text-xs">
-            No scheduled visit for this patient — select Jordan Ellis or book an
+            No scheduled visit for this patient - select Jordan Ellis or book an
             encounter to see the closed loop.
           </CardDescription>
         </CardHeader>
@@ -115,7 +115,7 @@ export function CareJourneyTimeline({ className }: { className?: string }) {
               Closed-loop journey
             </CardTitle>
             <CardDescription className="mt-1 max-w-xl text-xs leading-relaxed">
-              Scheduling through adherence and payer closure — mirrored on clinical
+              Scheduling through adherence and payer closure - mirrored on clinical
               and ops surfaces.
             </CardDescription>
           </div>

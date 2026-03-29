@@ -92,7 +92,7 @@ function DemoEncounterScheduleCard() {
         <CardTitle className="text-base">Manual walk-through primer</CardTitle>
         <CardDescription className="text-xs">
           Schedules an <strong>arrival</strong> in 30 seconds for the demo patient
-          (Jordan). The Provider workspace auto-opens the encounter — then use
+          (Jordan). The Provider workspace auto-opens the encounter - then use
           Pharmacy → Patient → Payer in order, mirroring real operations.
         </CardDescription>
       </CardHeader>
@@ -142,7 +142,7 @@ export default function DashboardPage() {
       <CarePageHeader
         eyebrow="Operations"
         title="Practice overview"
-        description="Closed-loop status across encounters, prescriptions, and payer milestones. Local mock state — structured like production EHR and claims feeds."
+        description="Closed-loop status across encounters, prescriptions, and payer milestones. Local mock state - structured like production EHR and claims feeds."
       />
 
       <JudgeDemoPanel />
@@ -185,7 +185,7 @@ export default function DashboardPage() {
         <CardHeader className="border-b border-border/60 bg-muted/15 py-4">
           <CardTitle className="text-base font-semibold">Cohort operations</CardTitle>
           <CardDescription className="text-xs">
-            Encounters and fulfillment by member — read-only operational view.
+            Encounters and fulfillment by member - read-only operational view.
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -222,7 +222,7 @@ export default function DashboardPage() {
                         {formatStageLabel(rowAppt.currentStage)}
                       </Badge>
                     ) : (
-                      <span className="text-muted-foreground">—</span>
+                      <span className="text-muted-foreground">-</span>
                     )}
                   </TableCell>
                   <TableCell>
@@ -231,7 +231,7 @@ export default function DashboardPage() {
                         {rxLabel(rowRx.status)}
                       </Badge>
                     ) : (
-                      <span className="text-muted-foreground">—</span>
+                      <span className="text-muted-foreground">-</span>
                     )}
                   </TableCell>
                   <TableCell>
@@ -240,11 +240,11 @@ export default function DashboardPage() {
                         {rowPayer.claimStatus}
                       </Badge>
                     ) : (
-                      <span className="text-muted-foreground">—</span>
+                      <span className="text-muted-foreground">-</span>
                     )}
                   </TableCell>
                   <TableCell className="max-w-[240px] truncate pr-4 text-right text-xs text-muted-foreground">
-                    {rowAppt?.nextAction ?? "—"}
+                    {rowAppt?.nextAction ?? "-"}
                   </TableCell>
                 </TableRow>
               ))}
@@ -329,7 +329,7 @@ export default function DashboardPage() {
             <div className="flex items-center justify-between text-xs">
               <span className="flex items-center gap-2 text-muted-foreground">
                 <Shield className="size-4 text-primary/70" />
-                {payer?.claimStatus ?? "—"}
+                {payer?.claimStatus ?? "-"}
               </span>
               {payer?.authorizedAmountUsd != null && (
                 <span className="tabular-nums text-foreground">${payer.authorizedAmountUsd}</span>
@@ -340,7 +340,7 @@ export default function DashboardPage() {
           <PanelCard title="Record" description="Header selector context.">
             <div className="flex items-center gap-2 text-xs">
               <ClipboardList className="size-4 text-muted-foreground" />
-              <span className="font-medium text-foreground">{patient?.displayName ?? "—"}</span>
+              <span className="font-medium text-foreground">{patient?.displayName ?? "-"}</span>
             </div>
           </PanelCard>
         </div>

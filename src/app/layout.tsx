@@ -21,7 +21,7 @@ const geistMono = localFont({
 export const metadata: Metadata = {
   title: "CareLoop AI",
   description:
-    "Healthcare hackathon prototype — closed-loop care workflow with AI-assisted documentation.",
+    "Healthcare hackathon prototype - closed-loop care workflow with AI-assisted documentation.",
   icons: {
     icon: "/favicon.ico",
   },

@@ -51,11 +51,11 @@ function rxStatusLabel(status: PrescriptionStatus) {
     case "pending_prior_auth":
       return "PA / documentation hold";
     case "pa_denied":
-      return "PA denied — prescriber action";
+      return "PA denied - prescriber action";
     case "sent":
       return "Transmitting";
     case "received_by_pharmacy":
-      return "Received — fill";
+      return "Received - fill";
     case "ready_for_pickup":
       return "Ready";
     case "picked_up":
@@ -201,11 +201,11 @@ export default function PharmacyPage() {
                           />
                         </div>
                         <p className="line-clamp-1 text-xs text-muted-foreground">
-                          {rowRx.lines.map((l) => l.drugName).join(", ") || "—"}
+                          {rowRx.lines.map((l) => l.drugName).join(", ") || "-"}
                         </p>
                         <div className="flex flex-wrap gap-1.5 pt-0.5">
                           <Badge variant="secondary" className="text-[0.65rem] font-normal">
-                            Order: {o ? formatStatus(o.status) : "—"}
+                            Order: {o ? formatStatus(o.status) : "-"}
                           </Badge>
                           <Badge variant="outline" className="text-[0.65rem] font-normal">
                             Rx: {rxStatusLabel(rowRx.status)}
@@ -234,7 +234,7 @@ export default function PharmacyPage() {
                     <span className="text-muted-foreground">
                       {o?.pickedUpAt
                         ? new Date(o.pickedUpAt).toLocaleString()
-                        : "—"}
+                        : "-"}
                     </span>
                   </li>
                 ))}
@@ -315,7 +315,7 @@ export default function PharmacyPage() {
                         <span className="font-medium">
                           {order?.pickedUpAt
                             ? new Date(order.pickedUpAt).toLocaleString()
-                            : "—"}
+                            : "-"}
                         </span>
                       </li>
                       <li className="flex justify-between gap-2 border-t pt-2">

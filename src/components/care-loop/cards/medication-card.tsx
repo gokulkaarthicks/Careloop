@@ -19,7 +19,7 @@ export function MedicationCard({
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-semibold">Medication</CardTitle>
         </CardHeader>
-        <CardContent className="text-xs text-muted-foreground">—</CardContent>
+        <CardContent className="text-xs text-muted-foreground">-</CardContent>
       </Card>
     );
   }

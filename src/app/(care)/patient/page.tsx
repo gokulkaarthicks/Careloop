@@ -143,14 +143,14 @@ export default function PatientPage() {
       <CarePageHeader
         eyebrow="Patient"
         title={`Hi, ${firstName}`}
-        description="Short nudges tied to your visit — actions here sync with your care team in this demo."
+        description="Short nudges tied to your visit - actions here sync with your care team in this demo."
         className="border-b-0 pb-2"
       />
 
       <section className="rounded-xl border border-border/70 bg-card px-5 py-5 shadow-care-card">
         <p className="text-label">This week</p>
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-          Pick up meds, log how you feel, and complete quick check-ins — same loop
+          Pick up meds, log how you feel, and complete quick check-ins - same loop
           your provider and pharmacy see.
         </p>
       </section>
@@ -180,7 +180,7 @@ export default function PatientPage() {
       {visitSummary && (
         <PanelCard
           title="Your visit, in plain words"
-          description="A simple recap — your clinician’s note in the chart is the official record."
+          description="A simple recap - your clinician’s note in the chart is the official record."
         >
           <p className="text-base font-medium leading-snug">{visitSummary.title}</p>
           <ul className="mt-3 space-y-2 text-sm leading-relaxed text-foreground/90">
@@ -215,7 +215,7 @@ export default function PatientPage() {
           description="After your clinician finishes your visit in CareLoop, a simple summary will show up here."
         >
           <p className="text-sm text-muted-foreground">
-            Nothing yet — when your care team finalizes the visit, you’ll see the
+            Nothing yet - when your care team finalizes the visit, you’ll see the
             highlights here.
           </p>
         </PanelCard>
@@ -223,7 +223,7 @@ export default function PatientPage() {
 
       <PanelCard
         title="Your medications"
-        description="How to take what was prescribed — ask your pharmacist if you have questions."
+        description="How to take what was prescribed - ask your pharmacist if you have questions."
       >
         {rxList.length === 0 ? (
           <p className="text-sm text-muted-foreground">
@@ -277,7 +277,7 @@ export default function PatientPage() {
               <span className="block font-semibold">I picked up my medication</span>
               <span className="block text-xs font-normal text-muted-foreground">
                 {pickupDone
-                  ? "We already have pickup on file — you’re good."
+                  ? "We already have pickup on file - you’re good."
                   : canConfirmPickup
                     ? "Tap when you have the bag from the pharmacy."
                     : "We’ll turn this on when the pharmacy says your order is ready."}
@@ -305,11 +305,11 @@ export default function PatientPage() {
 
       <PanelCard
         title="How are you feeling?"
-        description="Optional — not a diagnosis. We’ll share this with your care team."
+        description="Optional - not a diagnosis. We’ll share this with your care team."
       >
         {symptomSent && (
           <p className="mb-3 rounded-lg bg-teal-50 px-3 py-2 text-sm text-teal-900 dark:bg-teal-950/50 dark:text-teal-100">
-            Thanks — we sent that. You can send another update anytime.
+            Thanks - we sent that. You can send another update anytime.
           </p>
         )}
         <div className="space-y-4">
@@ -373,7 +373,7 @@ export default function PatientPage() {
             <Textarea
               id="symptom-note"
               className="mt-1.5 min-h-[88px] resize-none text-sm"
-              placeholder="Optional — a sentence or two is plenty."
+              placeholder="Optional - a sentence or two is plenty."
               value={symptomNote}
               onChange={(e) => {
                 setSymptomNote(e.target.value);
@@ -404,7 +404,7 @@ export default function PatientPage() {
             </p>
             {upcomingReminders.length === 0 ? (
               <p className="mt-2 text-sm text-muted-foreground">
-                Nothing scheduled — enjoy the quiet.
+                Nothing scheduled - enjoy the quiet.
               </p>
             ) : (
               <ul className="mt-2 space-y-2">
@@ -462,7 +462,7 @@ export default function PatientPage() {
       >
         {tasks.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No open tasks — check back after your next visit.
+            No open tasks - check back after your next visit.
           </p>
         ) : (
           <ul className="space-y-3">
@@ -505,7 +505,7 @@ export default function PatientPage() {
 
       <PanelCard
         title="Adherence check-ins"
-        description="Quick nudges — not a grade. Tap when you’ve done the step."
+        description="Quick nudges - not a grade. Tap when you’ve done the step."
       >
         {checks.length === 0 ? (
           <p className="text-sm text-muted-foreground">

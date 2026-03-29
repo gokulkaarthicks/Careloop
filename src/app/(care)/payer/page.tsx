@@ -114,7 +114,7 @@ export default function PayerPage() {
       <CarePageHeader
         eyebrow="Payer · mock analytics"
         title="Outcomes & engagement"
-        description={`${payerProfile.name} · ${payerProfile.planType}. Visit, pharmacy, and follow-up signals roll up for care management — not adjudicated claims.`}
+        description={`${payerProfile.name} · ${payerProfile.planType}. Visit, pharmacy, and follow-up signals roll up for care management - not adjudicated claims.`}
       >
         <Badge variant="neutral" className="shrink-0 text-[0.65rem] font-medium">
           Demo data
@@ -187,7 +187,7 @@ export default function PayerPage() {
           </CardHeader>
           <CardContent>
             <p className="text-xs text-muted-foreground">
-              Cohort average — blends closure, visit stage, Rx pickup, tasks, and
+              Cohort average - blends closure, visit stage, Rx pickup, tasks, and
               adherence.
             </p>
           </CardContent>
@@ -200,7 +200,7 @@ export default function PayerPage() {
             </CardDescription>
             <CardTitle className="text-2xl tabular-nums">
               {pickupAggregate.total === 0
-                ? "—"
+                ? "-"
                 : `${pickupAggregate.picked}/${pickupAggregate.total}`}
             </CardTitle>
           </CardHeader>
@@ -218,7 +218,7 @@ export default function PayerPage() {
             </CardDescription>
             <CardTitle className="text-2xl tabular-nums">
               {followUpAggregate.total === 0
-                ? "—"
+                ? "-"
                 : `${followUpAggregate.done}/${followUpAggregate.total}`}
             </CardTitle>
           </CardHeader>
@@ -236,7 +236,7 @@ export default function PayerPage() {
             </CardDescription>
             <CardTitle className="text-2xl tabular-nums">
               {adherenceAggregate.total === 0
-                ? "—"
+                ? "-"
                 : `${adherenceAggregate.done}/${adherenceAggregate.total}`}
             </CardTitle>
           </CardHeader>
@@ -252,7 +252,7 @@ export default function PayerPage() {
         <PanelCard
           className="lg:col-span-3"
           title="Member-level loop status"
-          description="Patient care completion, fulfillment, and engagement — normalized for reporting conversations."
+          description="Patient care completion, fulfillment, and engagement - normalized for reporting conversations."
         >
           <div className="overflow-x-auto rounded-lg border">
             <Table>
@@ -325,7 +325,7 @@ export default function PayerPage() {
         <PanelCard
           className="lg:col-span-2"
           title="Missed-care alerts"
-          description="Rule-based flags from overdue tasks, adherence windows, and open pickups — not clinical decision support."
+          description="Rule-based flags from overdue tasks, adherence windows, and open pickups - not clinical decision support."
         >
           {alerts.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed py-10 text-center">
@@ -382,7 +382,7 @@ export default function PayerPage() {
 
       <PanelCard
         title="Timeline of completed actions"
-        description="Workflow + patient events newest first — what already happened in the closed loop."
+        description="Workflow + patient events newest first - what already happened in the closed loop."
       >
         {timeline.length === 0 ? (
           <div className="flex items-center gap-3 rounded-lg border border-dashed px-4 py-8 text-sm text-muted-foreground">
@@ -437,7 +437,7 @@ export default function PayerPage() {
 
       <PanelCard
         title="Administrative touchpoint (demo)"
-        description="Mark paid / approved closes the claim stub and syncs the linked e-Rx to the Pharmacy incoming queue when the order was still queued. Open Pharmacy to fill — or finalize on Provider first if the Rx is still draft."
+        description="Mark paid / approved closes the claim stub and syncs the linked e-Rx to the Pharmacy incoming queue when the order was still queued. Open Pharmacy to fill - or finalize on Provider first if the Rx is still draft."
       >
         <div className="overflow-x-auto rounded-lg border">
           <Table>
@@ -466,7 +466,7 @@ export default function PayerPage() {
                       ) : row.authorizedAmountUsd != null ? (
                         <span>${row.authorizedAmountUsd} auth</span>
                       ) : (
-                        "—"
+                        "-"
                       )}
                     </TableCell>
                     <TableCell className="text-right">

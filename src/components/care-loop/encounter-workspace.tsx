@@ -71,7 +71,7 @@ function truncateList(
   maxLen: number,
 ): string {
   const slice = items.slice(0, max).join("; ");
-  if (slice.length <= maxLen) return slice || "—";
+  if (slice.length <= maxLen) return slice || "-";
   return `${slice.slice(0, maxLen)}…`;
 }
 
@@ -134,10 +134,10 @@ export function EncounterWorkspace({
         clinical.allergies.length === 0
           ? "NKDA"
           : truncateList(
-              clinical.allergies.map((a) => a.substance),
-              3,
-              80,
-            );
+            clinical.allergies.map((a) => a.substance),
+            3,
+            80,
+          );
       const meds = truncateList(
         clinical.medications.map((m) => `${m.name} ${m.dose}`.trim()),
         3,
@@ -149,7 +149,7 @@ export function EncounterWorkspace({
         120,
       );
       lines.push(
-        `Allergies: ${allergies}\nActive meds: ${meds || "—"}\nProblems: ${probs || "—"}`,
+        `Allergies: ${allergies}\nActive meds: ${meds || "-"}\nProblems: ${probs || "-"}`,
       );
     }
 
@@ -158,7 +158,7 @@ export function EncounterWorkspace({
         `Visit: ${activeAppointment.title}\nWhen: ${new Date(activeAppointment.scheduledFor).toLocaleString()}\nNext: ${activeAppointment.nextAction}`,
       );
     } else {
-      lines.push("No active visit slot — pick a patient with an appointment.");
+      lines.push("No active visit slot - pick a patient with an appointment.");
     }
 
     if (preVisit) {
@@ -202,7 +202,7 @@ export function EncounterWorkspace({
     } else {
       setMessages(buildConciseBrief());
     }
-    // Only re-run when patientId changes — do not depend on buildConciseBrief or messages
+    // Only re-run when patientId changes - do not depend on buildConciseBrief or messages
     // or chat resets when preVisit/briefing loads and wipes history.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- patient switch only; brief uses latest render
   }, [patientId]);
@@ -260,8 +260,8 @@ export function EncounterWorkspace({
       const lines =
         data.hits?.length ?
           data.hits.map((h) => `• [${h.source}] ${h.snippet}`).join("\n")
-        : (data.note ??
-          "No structured matches — try a medication name, ICD-10 code, or allergy.");
+          : (data.note ??
+            "No structured matches - try a medication name, ICD-10 code, or allergy.");
       return lines;
     },
     [patientId],
@@ -293,7 +293,7 @@ export function EncounterWorkspace({
       onSoapChange(data.soap ?? "");
       return (
         data.chatAcknowledgment?.trim() ||
-        "SOAP updated — review and edit via the SOAP button below."
+        "SOAP updated - review and edit via the SOAP button below."
       );
     },
     [patient, activeAppointment, clinical, onSoapChange],
@@ -309,7 +309,7 @@ export function EncounterWorkspace({
         body:
           destination === "payer" ?
             "Demo: SOAP queued for payer / claims workflow (mock)."
-          : "Demo: SOAP routed to provider / care team inbox (mock).",
+            : "Demo: SOAP routed to provider / care team inbox (mock).",
         meta: "SOAP handoff",
       },
     ]);
@@ -392,7 +392,7 @@ export function EncounterWorkspace({
           {
             id: `a_${Date.now()}`,
             role: "assistant",
-            body: "Treatment plan draft placed — open Plan below to review or edit.",
+            body: "Treatment plan draft placed - open Plan below to review or edit.",
             meta: "Documentation",
           },
         ]);
@@ -455,7 +455,7 @@ export function EncounterWorkspace({
           <DialogHeader>
             <DialogTitle>Add prescription line</DialogTitle>
             <DialogDescription>
-              Demo e-prescribe — enter details, then add to the encounter.
+              Demo e-prescribe - enter details, then add to the encounter.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 py-1">
@@ -807,56 +807,56 @@ export function EncounterWorkspace({
       <div className="relative min-h-0 flex-1 overflow-hidden">
         <ScrollArea className="absolute inset-0 h-full w-full overflow-hidden">
           <div className="space-y-3 px-3 py-3 pr-4">
-          <p className="border-b border-dashed border-border/60 pb-2 text-[0.65rem] text-muted-foreground">
-            Chart search, SOAP (“generate soap note”, “update soap …”), treatment plan, or prescribe — type below.
-          </p>
+            <p className="border-b border-dashed border-border/60 pb-2 text-[0.65rem] text-muted-foreground">
+              Chart search, SOAP (“generate soap note”, “update soap …”), treatment plan, or prescribe - type below.
+            </p>
 
-          {messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={cn(
-                "flex gap-2",
-                msg.role === "user" ? "justify-end" : "justify-start",
-              )}
-            >
-              {msg.role === "assistant" && (
-                <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/10">
-                  <Stethoscope className="size-3.5 text-primary" />
-                </div>
-              )}
+            {messages.map((msg) => (
               <div
+                key={msg.id}
                 className={cn(
-                  "max-w-[min(100%,min(92vw,40rem))] rounded-lg px-3 py-2 text-xs leading-relaxed shadow-sm",
-                  msg.role === "user"
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-muted/40 text-foreground",
+                  "flex gap-2",
+                  msg.role === "user" ? "justify-end" : "justify-start",
                 )}
               >
-                {msg.role === "user" && (
-                  <User className="mb-1 inline size-3 opacity-70" />
+                {msg.role === "assistant" && (
+                  <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/10">
+                    <Stethoscope className="size-3.5 text-primary" />
+                  </div>
                 )}
-                <pre className="whitespace-pre-wrap font-sans">{msg.body}</pre>
-                {msg.meta && (
-                  <p className="mt-1.5 border-t border-border/40 pt-1 text-[0.65rem] text-muted-foreground">
-                    {msg.meta}
-                  </p>
+                <div
+                  className={cn(
+                    "max-w-[min(100%,min(92vw,40rem))] rounded-lg px-3 py-2 text-xs leading-relaxed shadow-sm",
+                    msg.role === "user"
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted/40 text-foreground",
+                  )}
+                >
+                  {msg.role === "user" && (
+                    <User className="mb-1 inline size-3 opacity-70" />
+                  )}
+                  <pre className="whitespace-pre-wrap font-sans">{msg.body}</pre>
+                  {msg.meta && (
+                    <p className="mt-1.5 border-t border-border/40 pt-1 text-[0.65rem] text-muted-foreground">
+                      {msg.meta}
+                    </p>
+                  )}
+                </div>
+                {msg.role === "user" && (
+                  <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-muted">
+                    <User className="size-3.5" />
+                  </div>
                 )}
               </div>
-              {msg.role === "user" && (
-                <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md bg-muted">
-                  <User className="size-3.5" />
-                </div>
-              )}
-            </div>
-          ))}
-          {pending && (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Loader2 className="size-3.5 animate-spin" />
-              Working…
-            </div>
-          )}
+            ))}
+            {pending && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Loader2 className="size-3.5 animate-spin" />
+                Working…
+              </div>
+            )}
 
-          <div ref={bottomRef} />
+            <div ref={bottomRef} />
           </div>
         </ScrollArea>
       </div>

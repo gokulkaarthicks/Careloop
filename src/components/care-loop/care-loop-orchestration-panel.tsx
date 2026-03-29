@@ -90,7 +90,7 @@ export function CareLoopOrchestrationPanel({
               Loop orchestration
             </CardTitle>
             <CardDescription className="max-w-xl text-xs">
-              End-to-end pipeline across portals from this draft — same mock store
+              End-to-end pipeline across portals from this draft - same mock store
               everywhere.
             </CardDescription>
           </div>
@@ -171,7 +171,7 @@ export function CareLoopOrchestrationPanel({
 
         {done && (
           <p className="text-xs text-emerald-700 dark:text-emerald-400">
-            Full loop finished — check patient, pharmacy, and payer tabs for updated
+            Full loop finished - check patient, pharmacy, and payer tabs for updated
             state.
           </p>
         )}
@@ -185,7 +185,7 @@ export function CareLoopOrchestrationPanel({
 
         {visitFinalized && (
           <p className="text-[0.7rem] text-muted-foreground">
-            This visit is already finalized — reset the demo to run orchestration again.
+            This visit is already finalized - reset the demo to run orchestration again.
           </p>
         )}
       </CardContent>

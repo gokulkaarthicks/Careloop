@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import { Bot, CheckCircle2, Loader2, XCircle } from "lucide-react";
 
 /**
- * Fixed bottom strip — shows which agent is running during agentic finalize.
+ * Fixed bottom strip - shows which agent is running during agentic finalize.
  */
 export function AgentActivityOverlay() {
   const agentActivity = useCareWorkflowStore((s) => s.agentActivity);

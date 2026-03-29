@@ -18,7 +18,7 @@ function StoreHydration() {
 export function AppProviders({ children }: { children: React.ReactNode }) {
   return (
     <TooltipProvider>
-      <SidebarProvider>
+      <SidebarProvider className="h-svh min-h-0 overflow-hidden">
         <StoreHydration />
         {children}
       </SidebarProvider>

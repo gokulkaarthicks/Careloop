@@ -165,8 +165,8 @@ export function JudgeDemoPanel() {
               />
               <MetricLine
                 label="Payer closure %"
-                before={b.payerClosureScore != null ? String(b.payerClosureScore) : "—"}
-                after={a.payerClosureScore != null ? String(a.payerClosureScore) : "—"}
+                before={b.payerClosureScore != null ? String(b.payerClosureScore) : "-"}
+                after={a.payerClosureScore != null ? String(a.payerClosureScore) : "-"}
               />
             </div>
           ) : (
@@ -178,7 +178,7 @@ export function JudgeDemoPanel() {
           {done && (
             <p className="mt-3 flex items-center gap-1.5 text-xs text-emerald-700 dark:text-emerald-400">
               <ArrowRight className="size-3.5" />
-              Open Provider, Patient, Pharmacy, and Payer tabs — state is synced.
+              Open Provider, Patient, Pharmacy, and Payer tabs - state is synced.
             </p>
           )}
         </div>

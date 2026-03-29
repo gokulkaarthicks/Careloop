@@ -110,7 +110,7 @@ export function CareAppSidebar() {
               </SelectContent>
             </Select>
             <p className="mt-2 text-[0.65rem] leading-snug text-muted-foreground">
-              Mock session — replace with Supabase when configured.
+              Mock session - replace with Supabase when configured.
             </p>
           </SidebarGroupContent>
         </SidebarGroup>

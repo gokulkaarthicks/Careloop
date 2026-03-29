@@ -91,7 +91,7 @@ export function DashboardWorkflowTabs({ stage }: { stage?: WorkflowStage }) {
       <CardHeader className="border-b border-border/60 bg-muted/20 pb-4">
         <CardTitle className="text-base font-semibold">Workflow stages</CardTitle>
         <CardDescription className="text-xs">
-          Same loop across portals — select a stage to see ownership and the next
+          Same loop across portals - select a stage to see ownership and the next
           clinical action.
         </CardDescription>
       </CardHeader>

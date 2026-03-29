@@ -18,8 +18,9 @@ export function CareAppShell({ children }: { children: React.ReactNode }) {
       <SidebarInset
         className={cn(
           "care-canvas overflow-x-hidden",
-          providerLockedLayout &&
-            "h-svh min-h-0 max-h-svh flex-1 overflow-hidden",
+          providerLockedLayout
+            ? "h-svh min-h-0 max-h-svh flex-1 overflow-hidden"
+            : "overflow-y-auto",
         )}
       >
         <div className="shrink-0">
