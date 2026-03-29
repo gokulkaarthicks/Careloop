@@ -5,14 +5,14 @@ import { CarePageHeader } from "@/components/care-loop/care-page-header";
 import { EncounterWorkspace } from "@/components/care-loop/encounter-workspace";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import {
-  buildPreVisitAgentInput,
-  runPreVisitAgent,
-} from "@/lib/agents/pre-visit-agent";
+import { buildPreVisitAgentInput } from "@/lib/agents/pre-visit-agent";
+import { fetchPreVisitOutput } from "@/lib/agents/pre-visit-fetch";
+import type { PreVisitAgentOutput } from "@/types/pre-visit-agent";
 import { runAgenticEncounterPipeline } from "@/lib/agentic/encounter-pipeline";
+import { scheduleBackgroundPaPolicyResolution } from "@/lib/orchestration/background-pa-policy";
 import { useCareWorkflowStore } from "@/stores/care-workflow-store";
-import type { PrescriptionLine } from "@/types/workflow";
-import { AlertTriangle, Sparkles } from "lucide-react";
+import type { ChartInferenceReview, PrescriptionLine } from "@/types/workflow";
+import { AlertTriangle } from "lucide-react";
 
 export default function ProviderPage() {
   const snapshot = useCareWorkflowStore((s) => s.snapshot);
@@ -34,6 +34,9 @@ export default function ProviderPage() {
   );
   const pushAgenticPatientNotification = useCareWorkflowStore(
     (s) => s.pushAgenticPatientNotification,
+  );
+  const setChartInferenceForAppointment = useCareWorkflowStore(
+    (s) => s.setChartInferenceForAppointment,
   );
   const ehrVisitBriefingLines = useCareWorkflowStore(
     (s) => s.ehrVisitBriefingLines[patientId],
@@ -85,8 +88,15 @@ export default function ProviderPage() {
     [snapshot.encounters, patientId],
   );
 
-  const preVisit = useMemo(() => {
-    if (!patient) return null;
+  const [preVisit, setPreVisit] = useState<PreVisitAgentOutput | null>(null);
+  const [preVisitError, setPreVisitError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!patient) {
+      setPreVisit(null);
+      setPreVisitError(null);
+      return;
+    }
     const appointmentReason =
       appt?.title ?? "Primary care follow-up (no upcoming slot in cohort)";
     const input = buildPreVisitAgentInput({
@@ -96,7 +106,22 @@ export default function ProviderPage() {
       clinical,
       priorEncounters,
     });
-    return runPreVisitAgent(input);
+    let cancelled = false;
+    void (async () => {
+      try {
+        setPreVisitError(null);
+        const out = await fetchPreVisitOutput(input);
+        if (!cancelled) setPreVisit(out);
+      } catch (e) {
+        if (!cancelled) {
+          setPreVisit(null);
+          setPreVisitError(e instanceof Error ? e.message : "Pre-visit agent failed");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [patient, appt?.title, clinical, priorEncounters]);
 
   const [soapNote, setSoapNote] = useState("");
@@ -214,7 +239,6 @@ export default function ProviderPage() {
           pharmacyId: pharmacy.id,
           insurancePlanId: patient.insurancePlanId,
           preferredPharmacyId: patient.preferredPharmacyId,
-          coverageDemoTag: patient.coverageDemoTag,
         },
         (step) => {
           completed.push(`${step.agent}`);
@@ -240,6 +264,32 @@ export default function ProviderPage() {
         prescriptionLines: rxLines,
         coverage: result.coverage,
       });
+
+      const chartRes = await fetch("/api/ai/chart-inference", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          appointmentId: appt.id,
+          patientId,
+          clinical: clinical ?? undefined,
+          soapNote: mergedSoap,
+          treatmentPlan,
+        }),
+      });
+      const chartPayload = (await chartRes.json().catch(() => ({}))) as {
+        error?: string;
+        appointmentId?: string;
+      };
+      if (!chartRes.ok) {
+        throw new Error(
+          chartPayload.error ?? `Chart inference failed (${chartRes.status})`,
+        );
+      }
+      setChartInferenceForAppointment(appt.id, chartPayload as ChartInferenceReview);
+
+      if (result.coverage.holdForPriorAuth) {
+        scheduleBackgroundPaPolicyResolution({ patientId });
+      }
 
       for (const e of result.timelineEntries) {
         pushWorkflowTimelineEntry({
@@ -268,7 +318,7 @@ export default function ProviderPage() {
           "PA hold — payer must review before pharmacy release."
         : result.coverage.anyStepTherapyBlock ?
           "Step therapy gate — documentation required before transmit."
-        : "Pharmacy path cleared — e-Rx released under demo rules.",
+        : "Pharmacy path cleared — e-Rx released per agentic coverage output.",
         completedStepLabels: completed,
       });
     } catch (err) {
@@ -300,6 +350,7 @@ export default function ProviderPage() {
     pushAgenticPatientNotification,
     setSoapNote,
     clinical,
+    setChartInferenceForAppointment,
   ]);
 
   const canFinalize =
@@ -313,6 +364,18 @@ export default function ProviderPage() {
     !agenticFinalizing;
 
   const canEditDocs = !visitFinalized;
+
+  useEffect(() => {
+    const html = document.documentElement;
+    const prevHtml = html.style.overflow;
+    const prevBody = document.body.style.overflow;
+    html.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+    return () => {
+      html.style.overflow = prevHtml;
+      document.body.style.overflow = prevBody;
+    };
+  }, []);
 
   useEffect(() => {
     setWorkflowDockPrimaryAction({
@@ -330,11 +393,13 @@ export default function ProviderPage() {
   ]);
 
   return (
-    <div className="mx-auto flex w-full max-w-none flex-col gap-4">
+    <div className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col gap-2 overflow-hidden">
+      <div className="shrink-0 space-y-2">
       <CarePageHeader
+        className="gap-2 border-b border-border/70 pb-3 sm:pb-4"
         eyebrow="Provider"
         title="Ambulatory encounter"
-        description="Chart context, chat-driven docs, e-prescribe — Finalize runs a multi-agent pipeline (PA rules, routing, SOAP addendum) with a status overlay."
+        description="Chart context, chat-driven docs, e-prescribe — Finalize runs a Grok-backed agentic pipeline (coverage adjudication, routing, SOAP addendum) with a status overlay."
       >
         {appt && (
           <div className="flex flex-wrap gap-2">
@@ -368,19 +433,6 @@ export default function ProviderPage() {
         </Alert>
       )}
 
-      <Alert>
-        <AlertTitle>Agentic finalize (demo)</AlertTitle>
-        <AlertDescription className="text-xs leading-relaxed">
-          When you tap <strong>Finalize encounter</strong>, agents load chart context, apply{" "}
-          <strong>mock payer / PA rules</strong> (e.g. specialty meds → PA; standard meds →
-          pharmacy), draft a <strong>SOAP addendum</strong>, update the{" "}
-          <strong>workflow timeline</strong>, and send a <strong>patient inbox</strong> notice.
-          Try <code className="rounded bg-muted px-1">Ozempic</code> or{" "}
-          <code className="rounded bg-muted px-1">Humira</code> in a line to see PA routing, or
-          add <code className="rounded bg-muted px-1">MRI</code> in the treatment plan.
-        </AlertDescription>
-      </Alert>
-
       {chartSummaryNotice?.error && (
         <Alert variant="destructive">
           <AlertTriangle className="size-4" />
@@ -391,51 +443,43 @@ export default function ProviderPage() {
         </Alert>
       )}
 
-      {chartSummaryNotice &&
-        !chartSummaryNotice.error &&
-        (chartSummaryNotice.warning || chartSummaryNotice.degraded) && (
-          <Alert>
-            <Sparkles className="size-4" />
-            <AlertTitle>AI summary notice</AlertTitle>
-            <AlertDescription className="text-xs">
-              {chartSummaryNotice.warning ??
-                "Using offline mock data for this step."}
-            </AlertDescription>
-          </Alert>
-        )}
+      {preVisitError && (
+        <Alert variant="destructive">
+          <AlertTriangle className="size-4" />
+          <AlertTitle>Pre-visit agent failed</AlertTitle>
+          <AlertDescription className="text-xs">{preVisitError}</AlertDescription>
+        </Alert>
+      )}
+      </div>
 
       {patient && (
-        <EncounterWorkspace
-          patientId={patientId}
-          patient={patient}
-          clinical={clinical ?? null}
-          briefingLines={ehrVisitBriefingLines ?? null}
-          appointments={appointments}
-          activeAppointment={appt ?? null}
-          preVisit={preVisit}
-          disabled={!clinical}
-          soapNote={soapNote}
-          onSoapChange={setSoapNote}
-          treatmentPlan={treatmentPlan}
-          onPlanChange={setTreatmentPlan}
-          rxLines={rxLines}
-          onRxLinesChange={setRxLines}
-          visitFinalized={visitFinalized}
-          canEditDocs={canEditDocs}
-          onStartEncounter={
-            appt && appt.status === "scheduled"
-              ? () => openAppointment(appt.id)
-              : undefined
-          }
-          canStartEncounter={!!appt && appt.status === "scheduled"}
-        />
-      )}
-
-      {appt && (
-        <p className="text-xs text-muted-foreground">
-          <span className="font-medium text-foreground">Next action: </span>
-          {appt.nextAction}
-        </p>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <EncounterWorkspace
+            patientId={patientId}
+            patient={patient}
+            clinical={clinical ?? null}
+            briefingLines={ehrVisitBriefingLines ?? null}
+            appointments={appointments}
+            activeAppointment={appt ?? null}
+            preVisit={preVisit}
+            disabled={!clinical}
+            soapNote={soapNote}
+            onSoapChange={setSoapNote}
+            treatmentPlan={treatmentPlan}
+            onPlanChange={setTreatmentPlan}
+            rxLines={rxLines}
+            onRxLinesChange={setRxLines}
+            visitFinalized={visitFinalized}
+            canEditDocs={canEditDocs}
+            onStartEncounter={
+              appt && appt.status === "scheduled"
+                ? () => openAppointment(appt.id)
+                : undefined
+            }
+            canStartEncounter={!!appt && appt.status === "scheduled"}
+            nextAction={appt?.nextAction ?? null}
+          />
+        </div>
       )}
     </div>
   );

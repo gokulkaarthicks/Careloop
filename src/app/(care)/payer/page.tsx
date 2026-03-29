@@ -123,7 +123,7 @@ export default function PayerPage() {
 
       <PanelCard
         title="Prior authorization queue (demo)"
-        description="Resolve PA cases to simulate payer approval, denial, or more-info requests — downstream pharmacy + notifications update automatically."
+        description="Pending cases also auto-adjudicate in the background via payer policy agents (see workflow dock). Use buttons to override or teach denial / more-info paths."
       >
         {pendingPa.length === 0 ?
           <p className="text-sm text-muted-foreground">

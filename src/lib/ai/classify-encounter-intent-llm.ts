@@ -1,4 +1,4 @@
-import { createXaiClient, getXaiWorkflowModel } from "@/lib/ai/xai-client";
+import { createXaiClientOrThrow, getXaiWorkflowModel } from "@/lib/ai/xai-client";
 import { isXaiApiKeyConfigured } from "@/lib/ai/config";
 
 export type EncounterIntentKind = "soap" | "plan" | "rx" | "search";
@@ -6,30 +6,30 @@ export type EncounterIntentKind = "soap" | "plan" | "rx" | "search";
 const SYSTEM = `You are a classifier for a clinical encounter chat (hackathon demo).
 Return JSON only: {"intent":"soap"|"plan"|"rx"|"search"}
 Rules:
-- soap: user wants SOAP note, clinical documentation, or dictation to be formatted as SOAP; mentions subjective/objective/assessment or "soap note(s)".
-- plan: user wants ONLY a treatment / care plan (not SOAP); explicit "treatment plan" or "care plan" as the main ask without SOAP.
-- rx: user wants to prescribe, add a drug, or says "prescription X" / "prescribe X".
-- search: chart lookup, question about patient data, medication info lookup, ICd search, or unclear short query.
+- soap: user wants SOAP note, clinical documentation, or dictation formatted as SOAP.
+- plan: user wants ONLY a treatment / care plan (not SOAP).
+- rx: user wants to prescribe, add a drug, or discusses prescription lines.
+- search: chart lookup, patient data questions, or unclear short query.
 If both SOAP and treatment content appear but user asks to document the visit as SOAP, choose soap.`;
 
 /**
- * Optional LLM pass when regex routing is ambiguous.
+ * Intent routing agent (Grok). Required for encounter chat — no regex fallback.
  */
 export async function classifyEncounterIntentWithLlm(
   message: string,
-): Promise<{ intent: EncounterIntentKind; source: "xai" | "mock" }> {
+): Promise<EncounterIntentKind> {
   const trimmed = message.trim();
-  if (!trimmed) return { intent: "search", source: "mock" };
+  if (!trimmed) {
+    throw new Error("Encounter intent: empty message");
+  }
 
   if (!isXaiApiKeyConfigured()) {
-    return { intent: mockClassify(trimmed), source: "mock" };
+    throw new Error("XAI_API_KEY is required for encounter intent classification");
   }
 
-  const client = createXaiClient();
-  if (!client) {
-    return { intent: mockClassify(trimmed), source: "mock" };
-  }
+  const client = createXaiClientOrThrow();
 
+  let raw: string;
   try {
     const completion = await client.chat.completions.create({
       model: getXaiWorkflowModel(),
@@ -43,37 +43,26 @@ export async function classifyEncounterIntentWithLlm(
         },
       ],
     });
-    const raw = completion.choices[0]?.message?.content?.trim() ?? "";
-    const parsed = JSON.parse(raw) as { intent?: string };
-    const i = parsed.intent?.toLowerCase();
-    if (i === "soap" || i === "plan" || i === "rx" || i === "search") {
-      return { intent: i, source: "xai" };
-    }
-  } catch {
-    /* fall through */
+    raw = completion.choices[0]?.message?.content?.trim() ?? "";
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "xAI request failed";
+    throw new Error(`Encounter intent API error: ${msg}`);
   }
-  return { intent: mockClassify(trimmed), source: "mock" };
-}
 
-function mockClassify(t: string): EncounterIntentKind {
-  const s = t.toLowerCase();
-  if (
-    /\bprescribe\b|\bprescription\s+\w|\brx\s+\w|add\s+(a\s+)?med|new\s+med/.test(s)
-  ) {
-    return "rx";
+  if (!raw) {
+    throw new Error("Encounter intent: empty model response");
   }
-  if (
-    /\bsoap\b|dictation|document\s+(the\s+)?visit|subjective|o\/a\/p|\bs\/o\/a\/p\b/.test(
-      s,
-    )
-  ) {
-    return "soap";
+
+  let parsed: { intent?: string };
+  try {
+    parsed = JSON.parse(raw) as { intent?: string };
+  } catch {
+    throw new Error("Encounter intent: model returned non-JSON");
   }
-  if (/\btreatment\s+plan\b|\bcare\s+plan\b/.test(s) && !/\bsoap\b/.test(s)) {
-    return "plan";
+
+  const i = parsed.intent?.toLowerCase();
+  if (i === "soap" || i === "plan" || i === "rx" || i === "search") {
+    return i;
   }
-  if (/\bwhat\b|\bshow\b|\blist\b|\bsearch\b|medication|allergy|lab|icd/i.test(s)) {
-    return "search";
-  }
-  return "search";
+  throw new Error(`Encounter intent: invalid intent "${String(parsed.intent)}"`);
 }

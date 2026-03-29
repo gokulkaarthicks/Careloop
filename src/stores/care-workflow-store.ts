@@ -12,6 +12,7 @@ import type {
   AiHistorySummary,
   Appointment,
   CarePlanDraft,
+  ChartInferenceReview,
   Patient,
   PayerClaimStatus,
   Prescription,
@@ -30,7 +31,6 @@ import type {
   WorkflowEngineEventKind,
 } from "@/types/benefits";
 import {
-  buildChartInferenceReview,
   buildPatientFacingVisitSummary,
   buildPharmacyHandoffPayload,
 } from "@/lib/agents/during-visit";
@@ -78,9 +78,7 @@ type CareWorkflowState = {
   /** Last chart summary API outcome (not persisted) — for demo / error banners */
   lastChartSummaryMeta: {
     patientId: UUID;
-    source: "xai" | "mock";
-    warning?: string;
-    degraded?: boolean;
+    source: "xai";
     error?: string;
   } | null;
   /** Demo: auto-open encounter when wall clock passes this ISO time */
@@ -202,6 +200,10 @@ type CareWorkflowState = {
   setPreVisitBriefingForAppointment: (
     appointmentId: UUID,
     briefing: PreVisitAgentOutput,
+  ) => void;
+  setChartInferenceForAppointment: (
+    appointmentId: UUID,
+    review: ChartInferenceReview,
   ) => void;
   /** One-click judge demo (dashboard) — end-to-end simulated loop */
   judgeDemo: JudgeDemoState;
@@ -402,6 +404,12 @@ function runMedicationPickup(
     prescriptionId: rx.id,
   });
 
+  queueMicrotask(() => {
+    void import("@/lib/orchestration/post-pickup-agent").then((m) =>
+      m.runPostPickupAgenticChain(rx.patientId, rx.id),
+    );
+  });
+
   return true;
 }
 
@@ -504,6 +512,14 @@ export const useCareWorkflowStore = create<CareWorkflowState>()(
           return { snapshot: snap };
         }),
 
+      setChartInferenceForAppointment: (appointmentId, review) =>
+        set((s) => {
+          const snap = structuredClone(s.snapshot);
+          ensureWorkflowFields(snap);
+          snap.chartInferenceByAppointment[appointmentId] = review;
+          return { snapshot: snap };
+        }),
+
       setSelectedPatientId: (id) =>
         set((s) => ({
           selectedPatientId: id,
@@ -519,10 +535,32 @@ export const useCareWorkflowStore = create<CareWorkflowState>()(
         }),
 
       selectPatient: (patientId) =>
-        set((s) => ({
-          selectedPatientId: patientId,
-          selectedAppointmentId: defaultAppointmentIdForPatient(s.snapshot, patientId),
-        })),
+        set((s) => {
+          const snap = structuredClone(s.snapshot);
+          ensureWorkflowFields(snap);
+          const p = snap.patients.find((x) => x.id === patientId);
+          pushWorkflowEngineEventImpl(snap, {
+            kind: "patient_selected",
+            title: `Context: ${p?.displayName ?? "Member"}`,
+            detail: "Orchestrator switched cohort context.",
+            patientId,
+            role: "system",
+          });
+          if (snap.clinicalByPatientId[patientId]) {
+            pushWorkflowEngineEventImpl(snap, {
+              kind: "chart_loaded",
+              title: "Chart agent: clinical snapshot available",
+              detail: "Allergies, meds, diagnoses ready for agents.",
+              patientId,
+              role: "provider",
+            });
+          }
+          return {
+            snapshot: snap,
+            selectedPatientId: patientId,
+            selectedAppointmentId: defaultAppointmentIdForPatient(snap, patientId),
+          };
+        }),
 
       openAppointment: (appointmentId) =>
         set((s) => {
@@ -1133,13 +1171,6 @@ export const useCareWorkflowStore = create<CareWorkflowState>()(
             updatedAt: t,
           };
 
-          const clinical = snap.clinicalByPatientId[patientId];
-          snap.chartInferenceByAppointment[appointmentId] = buildChartInferenceReview({
-            appointmentId,
-            patientId,
-            clinical,
-          });
-
           const patientRow = snap.patients.find((p) => p.id === patientId);
           const pharmacyEntity = snap.pharmacies.find((p) => p.id === pharmacyId);
           if (patientRow && pharmacyEntity) {
@@ -1558,11 +1589,7 @@ export const useCareWorkflowStore = create<CareWorkflowState>()(
           let data: {
             summary?: AiHistorySummary;
             error?: string;
-            meta?: {
-              source?: string;
-              warning?: string;
-              degraded?: boolean;
-            };
+            code?: string;
           };
           try {
             data = (await res.json()) as typeof data;
@@ -1570,34 +1597,29 @@ export const useCareWorkflowStore = create<CareWorkflowState>()(
             set({
               lastChartSummaryMeta: {
                 patientId,
-                source: "mock",
+                source: "xai",
                 error: "Summary API returned invalid JSON",
               },
             });
             return;
           }
-          if (!res.ok) {
+          if (!res.ok || !data.summary) {
             set({
               lastChartSummaryMeta: {
                 patientId,
-                source: "mock",
+                source: "xai",
                 error: data.error ?? `Summary request failed (${res.status})`,
               },
             });
             return;
           }
-          if (data.summary) {
-            get().setAiSummary(patientId, data.summary);
-            const src = data.meta?.source === "xai" ? "xai" : "mock";
-            set({
-              lastChartSummaryMeta: {
-                patientId,
-                source: src,
-                warning: data.meta?.warning,
-                degraded: data.meta?.degraded,
-              },
-            });
-          }
+          get().setAiSummary(patientId, data.summary);
+          set({
+            lastChartSummaryMeta: {
+              patientId,
+              source: "xai",
+            },
+          });
         } finally {
           set({ aiLoading: false });
         }

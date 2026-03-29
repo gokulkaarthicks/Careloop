@@ -132,7 +132,11 @@ export type WorkflowEngineEventKind =
   | "provider_alerted"
   | "payer_alerted"
   | "patient_notified"
-  | "care_completed";
+  | "care_completed"
+  | "background_pa_policy_started"
+  | "background_pa_policy_completed"
+  | "refill_eligibility_evaluated"
+  | "orchestrator_tick";
 
 export interface WorkflowEngineEvent {
   id: UUID;

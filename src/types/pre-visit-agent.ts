@@ -35,9 +35,7 @@ export interface PreVisitAgentInput {
   }[];
 }
 
-/**
- * Deterministic rule-engine output today; same shape can be produced by an LLM later.
- */
+/** Output from the pre-visit agent (Grok via `/api/ai/pre-visit`). */
 export interface PreVisitAgentOutput {
   /** Exactly five bullets for sign-out / huddle */
   briefingBullets: [string, string, string, string, string];
@@ -48,7 +46,7 @@ export interface PreVisitAgentOutput {
   /** 0–100 composite; higher = fewer documentation gaps before rooming */
   visitReadinessScore: number;
   /** Agent version for telemetry / swapping implementations */
-  agentVersion: "rules-v1";
+  agentVersion: "llm-v1";
   /** ISO timestamp when the run was evaluated (caller-supplied for determinism) */
   generatedAt: string;
 }

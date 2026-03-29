@@ -1,9 +1,7 @@
 "use client";
 
-import {
-  buildPreVisitAgentInput,
-  runPreVisitAgent,
-} from "@/lib/agents/pre-visit-agent";
+import { buildPreVisitAgentInput } from "@/lib/agents/pre-visit-agent";
+import { fetchPreVisitOutput } from "@/lib/agents/pre-visit-fetch";
 import { buildOrchestrationSteps } from "@/lib/orchestration/step-definitions";
 import { SEED } from "@/lib/seed-data";
 import { useCareWorkflowStore } from "@/stores/care-workflow-store";
@@ -130,7 +128,7 @@ export async function runCareLoopWorkflow(
             clinical,
             priorEncounters,
           });
-          preVisitBriefing = runPreVisitAgent(pvInput);
+          preVisitBriefing = await fetchPreVisitOutput(pvInput);
           break;
         }
         case 2: {
@@ -166,6 +164,32 @@ export async function runCareLoopWorkflow(
             treatmentPlan: input.treatmentPlan,
             prescriptionLines: input.prescriptionLines,
           });
+
+          const postSnap = useCareWorkflowStore.getState().snapshot;
+          const postClinical = postSnap.clinicalByPatientId[input.patientId];
+          const chartRes = await fetch("/api/ai/chart-inference", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              appointmentId: input.appointmentId,
+              patientId: input.patientId,
+              clinical: postClinical,
+              soapNote: input.soapNote,
+              treatmentPlan: input.treatmentPlan,
+            }),
+          });
+          const chartPayload = (await chartRes.json().catch(() => ({}))) as {
+            error?: string;
+          };
+          if (!chartRes.ok) {
+            throw new Error(chartPayload.error ?? `Chart inference failed (${chartRes.status})`);
+          }
+          useCareWorkflowStore
+            .getState()
+            .setChartInferenceForAppointment(
+              input.appointmentId,
+              chartPayload as import("@/types/workflow").ChartInferenceReview,
+            );
           break;
         }
         case 5: {

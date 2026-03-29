@@ -55,7 +55,7 @@ export function CareAppHeader() {
             <SelectTrigger className="h-9 w-full min-w-[200px] max-w-[min(100%,320px)] border-border/80 bg-background/80 shadow-sm sm:w-[280px]">
               <SelectValue placeholder="Select patient" />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent align="start">
               {patients.map((p) => (
                 <SelectItem key={p.id} value={p.id}>
                   {p.displayName} · {p.mrn}

@@ -28,7 +28,7 @@ export function WorkflowEngineDock() {
   );
   const primary = useCareWorkflowStore((s) => s.workflowDockPrimaryAction);
   const agentActivity = useCareWorkflowStore((s) => s.agentActivity);
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
   const pathname = usePathname() ?? "";
   const onProvider = pathname.includes("/provider");
   const showPrimary = onProvider && primary;
@@ -89,52 +89,41 @@ export function WorkflowEngineDock() {
         </div>
 
         {expanded ?
-          <div className="grid gap-2 md:grid-cols-[1fr_minmax(0,280px)]">
-            <ScrollArea className="h-[min(22vh,200px)] rounded-lg border border-border/50 bg-muted/20 pr-3">
-              <ul className="space-y-2 py-1 text-xs">
-                {events.length === 0 ?
-                  <li className="px-2 py-6 text-center text-muted-foreground">
-                    <Bot className="mx-auto mb-2 size-6 opacity-40" />
-                    No engine events yet — finalize an encounter or resolve a PA on
-                    the Payer tab.
-                  </li>
-                : events.slice(0, 24).map((e) => (
-                    <li
-                      key={e.id}
-                      className="rounded-md border border-transparent bg-background/80 px-2 py-1.5 leading-snug"
-                    >
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="text-[0.6rem] uppercase text-muted-foreground">
-                          {kindLabel(e.kind)}
-                        </span>
-                        {e.role ?
-                          <Badge variant="outline" className="h-4 px-1 text-[0.55rem] font-normal">
-                            {e.role}
-                          </Badge>
-                        : null}
-                        <span className="text-[0.6rem] text-muted-foreground">
-                          {new Date(e.occurredAt).toLocaleTimeString()}
-                        </span>
-                      </div>
-                      <p className="font-medium text-foreground">{e.title}</p>
-                      {e.detail ?
-                        <p className="text-[0.7rem] text-muted-foreground">{e.detail}</p>
+          <ScrollArea className="h-[min(22vh,200px)] rounded-lg border border-border/50 bg-muted/20 pr-3">
+            <ul className="space-y-2 py-1 text-xs">
+              {events.length === 0 ?
+                <li className="px-2 py-6 text-center text-muted-foreground">
+                  <Bot className="mx-auto mb-2 size-6 opacity-40" />
+                  No engine events yet — finalize an encounter or resolve a PA on the
+                  Payer tab.
+                </li>
+              : events.slice(0, 24).map((e) => (
+                  <li
+                    key={e.id}
+                    className="rounded-md border border-transparent bg-background/80 px-2 py-1.5 leading-snug"
+                  >
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[0.6rem] uppercase text-muted-foreground">
+                        {kindLabel(e.kind)}
+                      </span>
+                      {e.role ?
+                        <Badge variant="outline" className="h-4 px-1 text-[0.55rem] font-normal">
+                          {e.role}
+                        </Badge>
                       : null}
-                    </li>
-                  ))
-                }
-              </ul>
-            </ScrollArea>
-            <div className="hidden rounded-lg border border-dashed border-primary/25 bg-primary/[0.04] p-3 text-[0.7rem] leading-relaxed text-muted-foreground md:block">
-              <p className="mb-1 font-semibold text-foreground">Chain (demo)</p>
-              <ol className="list-decimal space-y-1 pl-4">
-                <li>Chart → coverage / formulary agents</li>
-                <li>PA branch or pharmacy direct</li>
-                <li>Payer review → pharmacy fill → patient pickup</li>
-                <li>Payer claim closure</li>
-              </ol>
-            </div>
-          </div>
+                      <span className="text-[0.6rem] text-muted-foreground">
+                        {new Date(e.occurredAt).toLocaleTimeString()}
+                      </span>
+                    </div>
+                    <p className="font-medium text-foreground">{e.title}</p>
+                    {e.detail ?
+                      <p className="text-[0.7rem] text-muted-foreground">{e.detail}</p>
+                    : null}
+                  </li>
+                ))
+              }
+            </ul>
+          </ScrollArea>
         : null}
       </div>
     </div>

@@ -40,12 +40,24 @@ export type PaLineDecision = {
 };
 
 import type { CoverageEvaluationResult } from "@/types/benefits";
+import type { PatientClinicalSummary, PrescriptionLine } from "@/types/workflow";
+
+export type RunPipelineInput = {
+  patientDisplayName: string;
+  patientId: string;
+  appointmentId: string;
+  clinical: PatientClinicalSummary | null;
+  prescriptionLines: PrescriptionLine[];
+  treatmentPlan: string;
+  pharmacyId: string;
+  insurancePlanId?: string;
+  preferredPharmacyId?: string;
+};
 
 export type AgenticEncounterResult = {
   soapAddendum: string;
   paDecisions: PaLineDecision[];
   anyPaRequired: boolean;
-  /** Deterministic benefits / formulary output */
   coverage: CoverageEvaluationResult;
   timelineEntries: { title: string; detail: string }[];
   patientNotification?: { title: string; body: string };

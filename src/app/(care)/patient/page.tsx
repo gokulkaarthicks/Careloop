@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { runRefillEligibilityAgent } from "@/lib/orchestration/refill-agent";
 import { CarePageHeader } from "@/components/care-loop/care-page-header";
 import { PanelCard } from "@/components/care-loop/panel-card";
 import { Badge } from "@/components/ui/badge";
@@ -62,6 +63,14 @@ export default function PatientPage() {
   const inbox = (snapshot.patientWorkflowNotifications ?? []).filter(
     (n) => n.patientId === patientId,
   );
+
+  const refillAgentForPatient = useRef<string | null>(null);
+  useEffect(() => {
+    if (!patientId) return;
+    if (refillAgentForPatient.current === patientId) return;
+    refillAgentForPatient.current = patientId;
+    runRefillEligibilityAgent(patientId);
+  }, [patientId]);
 
   const visitSummary = useMemo(() => {
     const ap = snapshot.appointments.find((a) => a.patientId === patientId);

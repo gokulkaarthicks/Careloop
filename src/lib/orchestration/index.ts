@@ -3,6 +3,7 @@ export type {
   RunCareLoopWorkflowInput,
   RunCareLoopWorkflowOptions,
 } from "./run-care-loop-workflow";
+export * from "./care-loop-orchestrator";
 export {
   CARE_LOOP_WORKFLOW_STEPS,
   buildIdleOrchestrationSteps,

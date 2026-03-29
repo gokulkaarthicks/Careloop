@@ -8,14 +8,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
-import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -24,19 +16,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import {
-  looksLikeStructuredVisitDictation,
-  mapLlmLabelToEncounterIntent,
-  parseEncounterIntent,
-  shouldDisambiguateEncounterIntent,
-} from "@/lib/encounter-intent";
+import { fetchEncounterIntent } from "@/lib/encounter-intent-remote";
+import { extractMedicationFromPrescribePrompt } from "@/lib/prescribe-prompt";
 import { DEMO_TREATMENT_PLAN } from "@/lib/demo/canned-plan";
 import type { Patient, Appointment } from "@/types/workflow";
 import type { PatientClinicalSummary } from "@/types/workflow";
 import type { PrescriptionLine } from "@/types/workflow";
 import type { PreVisitAgentOutput } from "@/types/pre-visit-agent";
 import {
-  ChevronDown,
   ClipboardList,
   FileText,
   Loader2,
@@ -74,6 +61,8 @@ type Props = {
   canEditDocs: boolean;
   onStartEncounter?: () => void;
   canStartEncounter?: boolean;
+  /** Workflow hint (kept inside the card so the page shell stays fixed-height). */
+  nextAction?: string | null;
 };
 
 function truncateList(
@@ -113,14 +102,15 @@ export function EncounterWorkspace({
   canEditDocs,
   onStartEncounter,
   canStartEncounter,
+  nextAction = null,
 }: Props) {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [pending, setPending] = useState(false);
-  const [soapVisible, setSoapVisible] = useState(false);
-  const [planVisible, setPlanVisible] = useState(false);
+  const [soapEditOpen, setSoapEditOpen] = useState(false);
+  const [planEditOpen, setPlanEditOpen] = useState(false);
+  const [rxListOpen, setRxListOpen] = useState(false);
   const [rxDialogOpen, setRxDialogOpen] = useState(false);
-  const [soapActionsOpen, setSoapActionsOpen] = useState(false);
   const [rxDraft, setRxDraft] = useState({
     drugName: "",
     strength: "",
@@ -129,6 +119,11 @@ export function EncounterWorkspace({
     sig: "",
   });
   const bottomRef = useRef<HTMLDivElement>(null);
+  /** Per-patient chat threads so switching patients preserves each conversation. */
+  const encounterThreadsRef = useRef<Record<string, ChatMessage[]>>({});
+  const lastPatientIdRef = useRef<string | null>(null);
+  /** Avoid merging briefing into the previous patient's thread in the same commit as a switch. */
+  const skipNextBriefMergeRef = useRef(false);
 
   const buildConciseBrief = useCallback((): ChatMessage[] => {
     const lines: string[] = [];
@@ -192,18 +187,64 @@ export function EncounterWorkspace({
     ];
   }, [briefingLines, clinical, activeAppointment, preVisit]);
 
+  // Swap encounter thread when patient changes; persist the outgoing thread first.
   useEffect(() => {
-    setMessages(buildConciseBrief());
-  }, [patientId, buildConciseBrief]);
+    skipNextBriefMergeRef.current = true;
+    const prevId = lastPatientIdRef.current;
+    if (prevId !== null && prevId !== patientId) {
+      encounterThreadsRef.current[prevId] = messages;
+    }
+    lastPatientIdRef.current = patientId;
+
+    const saved = encounterThreadsRef.current[patientId];
+    if (saved && saved.length > 0) {
+      setMessages(saved);
+    } else {
+      setMessages(buildConciseBrief());
+    }
+    // Only re-run when patientId changes — do not depend on buildConciseBrief or messages
+    // or chat resets when preVisit/briefing loads and wipes history.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- patient switch only; brief uses latest render
+  }, [patientId]);
+
+  // Refresh the pinned "Encounter briefing" bubble when chart/pre-visit data arrives, without wiping chat.
+  useEffect(() => {
+    if (skipNextBriefMergeRef.current) {
+      skipNextBriefMergeRef.current = false;
+      return;
+    }
+    setMessages((prev) => {
+      const fresh = buildConciseBrief();
+      const first = fresh[0];
+      if (!first) return prev;
+      const idx = prev.findIndex((m) => m.id === "brief");
+      if (idx < 0) return prev;
+      const same =
+        prev[idx].body === first.body &&
+        (prev[idx].meta ?? "") === (first.meta ?? "");
+      if (same) return prev;
+      const next = [...prev];
+      next[idx] = {
+        ...next[idx],
+        body: first.body,
+        meta: first.meta,
+      };
+      encounterThreadsRef.current[patientId] = next;
+      return next;
+    });
+  }, [buildConciseBrief, patientId]);
 
   useEffect(() => {
-    setSoapVisible(false);
-    setPlanVisible(false);
+    setInput("");
+    setSoapEditOpen(false);
+    setPlanEditOpen(false);
+    setRxListOpen(false);
+    setRxDialogOpen(false);
   }, [patientId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, soapNote, treatmentPlan, rxLines, soapVisible, planVisible]);
+  }, [messages]);
 
   const runChartSearch = useCallback(
     async (query: string) => {
@@ -227,8 +268,10 @@ export function EncounterWorkspace({
   );
 
   const runSoapLlm = useCallback(
-    async (providerMessage: string) => {
-      if (!patient || !activeAppointment) return;
+    async (providerMessage: string): Promise<string> => {
+      if (!patient || !activeAppointment) {
+        return "";
+      }
       const res = await fetch("/api/ai/soap-note", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -239,18 +282,25 @@ export function EncounterWorkspace({
           providerMessage,
         }),
       });
-      const data = (await res.json()) as { soap?: string; error?: string };
+      const data = (await res.json()) as {
+        soap?: string;
+        chatAcknowledgment?: string;
+        error?: string;
+      };
       if (!res.ok || data.error) {
         throw new Error(data.error ?? "SOAP request failed");
       }
       onSoapChange(data.soap ?? "");
-      setSoapVisible(true);
+      return (
+        data.chatAcknowledgment?.trim() ||
+        "SOAP updated — review and edit via the SOAP button below."
+      );
     },
     [patient, activeAppointment, clinical, onSoapChange],
   );
 
   const queueSoapHandoff = useCallback((destination: "payer" | "provider") => {
-    setSoapActionsOpen(false);
+    setSoapEditOpen(false);
     setMessages((m) => [
       ...m,
       {
@@ -266,15 +316,14 @@ export function EncounterWorkspace({
   }, []);
 
   const openRxDialogFromPrompt = useCallback((q: string) => {
-    const m =
-      q.match(/prescribe\s+(.+)/i) ??
-      q.match(/prescription\s+(.+)/i) ??
-      q.match(/\brx\s+(.+)/i);
-    const rest = m?.[1]?.trim() ?? "";
-    const firstToken = rest.split(/[,\n]/)[0]?.trim() ?? "";
+    let drug = extractMedicationFromPrescribePrompt(q);
+    if (!drug) {
+      const parts = q.trim().split(/\s+/);
+      drug = parts.slice(1).join(" ").slice(0, 160) || parts[0] || "";
+    }
     setRxDraft((d) => ({
       ...d,
-      drugName: firstToken.replace(/^["']|["']$/g, ""),
+      drugName: drug,
       sig: d.sig,
     }));
     setRxDialogOpen(true);
@@ -311,25 +360,7 @@ export function EncounterWorkspace({
     setPending(true);
 
     try {
-      let intent = parseEncounterIntent(q);
-      if (shouldDisambiguateEncounterIntent(q, intent)) {
-        try {
-          const res = await fetch("/api/ai/encounter-intent", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message: q }),
-          });
-          if (res.ok) {
-            const data = (await res.json()) as { intent?: string };
-            const mapped = data.intent ?
-              mapLlmLabelToEncounterIntent(data.intent)
-            : null;
-            if (mapped) intent = mapped;
-          }
-        } catch {
-          /* keep regex intent */
-        }
-      }
+      const intent = await fetchEncounterIntent(q);
 
       if (intent.kind === "draft_soap") {
         if (!activeAppointment || !patient) {
@@ -343,35 +374,25 @@ export function EncounterWorkspace({
             },
           ]);
         } else {
-          await runSoapLlm(q);
-          const fromDictation =
-            looksLikeStructuredVisitDictation(q) ||
-            /\b(create|generate|write|draft)\s+(a\s+)?soap\s+notes?\b/i.test(q) ||
-            /\b(update|rewrite)\s+soap\b/i.test(q) ||
-            /\bsoap\s+is\b/i.test(q) ||
-            /\bthe\s+soap\s+is\b/i.test(q) ||
-            /\bsoap\s+notes?\s*:/i.test(q);
+          const ack = await runSoapLlm(q);
           setMessages((m) => [
             ...m,
             {
               id: `a_${Date.now()}`,
               role: "assistant",
-              body: fromDictation ?
-                "Converted your visit dictation into SOAP — edit below or use the SOAP menu (by the patient name) for handoff."
-              : "SOAP generated from chart context — edit below or use the SOAP menu for payer / provider handoff (demo).",
+              body: `${ack} Open SOAP below to edit or send handoff when ready.`,
               meta: "SOAP (LLM)",
             },
           ]);
         }
       } else if (intent.kind === "draft_plan") {
         onPlanChange(DEMO_TREATMENT_PLAN);
-        setPlanVisible(true);
         setMessages((m) => [
           ...m,
           {
             id: `a_${Date.now()}`,
             role: "assistant",
-            body: "Treatment plan draft placed — edit in the Plan card below.",
+            body: "Treatment plan draft placed — open Plan below to review or edit.",
             meta: "Documentation",
           },
         ]);
@@ -398,13 +419,14 @@ export function EncounterWorkspace({
           },
         ]);
       }
-    } catch {
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Request failed";
       setMessages((m) => [
         ...m,
         {
           id: `e_${Date.now()}`,
           role: "assistant",
-          body: "Request failed — try again.",
+          body: msg,
         },
       ]);
     } finally {
@@ -421,12 +443,10 @@ export function EncounterWorkspace({
     openRxDialogFromPrompt,
   ]);
 
-  const showDocsSection = soapVisible || planVisible || rxLines.length > 0;
-
   return (
     <div
       className={cn(
-        "flex w-full flex-col overflow-hidden rounded-xl border border-border/80 bg-card shadow-care-card",
+        "flex h-full min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/80 bg-card shadow-care-card",
         disabled && "opacity-60",
       )}
     >
@@ -524,98 +544,242 @@ export function EncounterWorkspace({
         </DialogContent>
       </Dialog>
 
+      <Dialog open={soapEditOpen} onOpenChange={setSoapEditOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl" showCloseButton>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="size-4" />
+              SOAP note
+            </DialogTitle>
+            <DialogDescription>
+              Subjective · Objective · Assessment · Plan
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            className="min-h-[200px] font-mono text-xs"
+            value={soapNote}
+            onChange={(e) => onSoapChange(e.target.value)}
+            disabled={visitFinalized || !canEditDocs}
+            spellCheck={false}
+            placeholder="S: … O: … A: … P: …"
+          />
+          <DialogFooter className="flex-col gap-2 border-t border-border/60 pt-3 sm:flex-row sm:justify-between">
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={visitFinalized || !canEditDocs || !soapNote.trim()}
+                onClick={() => queueSoapHandoff("payer")}
+              >
+                Send to payer (demo)
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={visitFinalized || !canEditDocs || !soapNote.trim()}
+                onClick={() => queueSoapHandoff("provider")}
+              >
+                Send to provider (demo)
+              </Button>
+            </div>
+            <Button type="button" variant="outline" onClick={() => setSoapEditOpen(false)}>
+              Done
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={planEditOpen} onOpenChange={setPlanEditOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl" showCloseButton>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ClipboardList className="size-4" />
+              Treatment plan
+            </DialogTitle>
+            <DialogDescription className="text-xs leading-relaxed">
+              Goals, meds, education, follow-up. The plan updates when you ask for a
+              &quot;treatment plan&quot; in the encounter chat (demo inserts a draft), when you edit
+              here, or when a saved visit draft is loaded. Finalize writes it to the encounter
+              record.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            className="min-h-[180px] text-xs"
+            value={treatmentPlan}
+            onChange={(e) => onPlanChange(e.target.value)}
+            disabled={visitFinalized || !canEditDocs}
+          />
+          <DialogFooter>
+            <Button type="button" onClick={() => setPlanEditOpen(false)}>
+              Done
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={rxListOpen} onOpenChange={setRxListOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl" showCloseButton>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Pill className="size-4" />
+              Prescription
+            </DialogTitle>
+            <DialogDescription>Order lines (demo e-prescribe)</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1 text-[0.7rem]"
+                disabled={visitFinalized || !canEditDocs}
+                onClick={() => setRxDialogOpen(true)}
+              >
+                <Plus className="size-3.5" />
+                Add line
+              </Button>
+            </div>
+            {rxLines.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No order lines yet.</p>
+            ) : (
+              rxLines.map((line, idx) => (
+                <div
+                  key={line.id}
+                  className="space-y-2 rounded-lg border bg-muted/15 p-3"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[0.65rem] font-semibold uppercase text-muted-foreground">
+                      Line {idx + 1}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-7 text-muted-foreground"
+                      disabled={visitFinalized || !canEditDocs}
+                      onClick={() =>
+                        onRxLinesChange(rxLines.filter((_, i) => i !== idx))
+                      }
+                      aria-label="Remove line"
+                    >
+                      <Trash2 className="size-3.5" />
+                    </Button>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <div className="space-y-1">
+                      <Label className="text-[0.65rem]">Medication</Label>
+                      <Input
+                        className="h-9 text-xs"
+                        value={line.drugName}
+                        onChange={(e) => {
+                          const next = [...rxLines];
+                          next[idx] = { ...line, drugName: e.target.value };
+                          onRxLinesChange(next);
+                        }}
+                        disabled={visitFinalized || !canEditDocs}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[0.65rem]">Strength</Label>
+                      <Input
+                        className="h-9 text-xs"
+                        value={line.strength}
+                        onChange={(e) => {
+                          const next = [...rxLines];
+                          next[idx] = { ...line, strength: e.target.value };
+                          onRxLinesChange(next);
+                        }}
+                        disabled={visitFinalized || !canEditDocs}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[0.65rem]">Quantity</Label>
+                      <Input
+                        className="h-9 text-xs"
+                        value={line.quantity}
+                        onChange={(e) => {
+                          const next = [...rxLines];
+                          next[idx] = { ...line, quantity: e.target.value };
+                          onRxLinesChange(next);
+                        }}
+                        disabled={visitFinalized || !canEditDocs}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[0.65rem]">Refills</Label>
+                      <Input
+                        type="number"
+                        className="h-9 text-xs"
+                        value={line.refills}
+                        onChange={(e) => {
+                          const next = [...rxLines];
+                          next[idx] = {
+                            ...line,
+                            refills: Number(e.target.value) || 0,
+                          };
+                          onRxLinesChange(next);
+                        }}
+                        disabled={visitFinalized || !canEditDocs}
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[0.65rem]">Sig (directions)</Label>
+                    <Textarea
+                      className="min-h-[56px] text-xs"
+                      value={line.sig}
+                      onChange={(e) => {
+                        const next = [...rxLines];
+                        next[idx] = { ...line, sig: e.target.value };
+                        onRxLinesChange(next);
+                      }}
+                      disabled={visitFinalized || !canEditDocs}
+                    />
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+          <DialogFooter>
+            <Button type="button" onClick={() => setRxListOpen(false)}>
+              Done
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Identity + schedule strip */}
-      <div className="flex flex-col gap-3 border-b border-border/60 bg-muted/20 px-4 py-3 sm:flex-row sm:items-start sm:justify-between">
+      <div className="flex flex-col gap-3 border-b border-border/60 bg-muted/20 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div className="min-w-0 flex-1">
           <p className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted-foreground">
             Encounter workspace
           </p>
           {patient ? (
             <>
-              <div className="mt-1 flex flex-wrap items-start gap-2">
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-lg font-semibold leading-tight">
-                    {patient.displayName}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    MRN {patient.mrn} · DOB {patient.dateOfBirth}
-                  </p>
-                </div>
-                {soapNote.trim().length > 0 && (
-                  <div className="relative shrink-0">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-8 gap-1.5 text-xs"
-                      aria-expanded={soapActionsOpen}
-                      aria-haspopup="menu"
-                      onClick={() => setSoapActionsOpen((o) => !o)}
-                    >
-                      <FileText className="size-3.5" />
-                      SOAP
-                      <ChevronDown className="size-3 opacity-70" />
-                    </Button>
-                    {soapActionsOpen ? (
-                      <>
-                        <button
-                          type="button"
-                          className="fixed inset-0 z-30 cursor-default"
-                          aria-label="Close SOAP actions"
-                          onClick={() => setSoapActionsOpen(false)}
-                        />
-                        <div
-                          role="menu"
-                          className="absolute right-0 top-full z-40 mt-1 w-56 rounded-lg border border-border bg-popover py-1 text-popover-foreground shadow-md ring-1 ring-foreground/10"
-                        >
-                          <button
-                            type="button"
-                            role="menuitem"
-                            className="flex w-full cursor-default items-center rounded-md px-2 py-1.5 text-left text-sm outline-none hover:bg-accent focus:bg-accent disabled:pointer-events-none disabled:opacity-50"
-                            disabled={visitFinalized || !canEditDocs}
-                            onClick={() => {
-                              setSoapVisible(true);
-                              setSoapActionsOpen(false);
-                            }}
-                          >
-                            View / edit note
-                          </button>
-                          <div className="my-1 h-px bg-border" />
-                          <button
-                            type="button"
-                            role="menuitem"
-                            className="flex w-full cursor-default items-center rounded-md px-2 py-1.5 text-left text-sm outline-none hover:bg-accent focus:bg-accent"
-                            onClick={() => queueSoapHandoff("payer")}
-                          >
-                            Send to payer (demo)
-                          </button>
-                          <button
-                            type="button"
-                            role="menuitem"
-                            className="flex w-full cursor-default items-center rounded-md px-2 py-1.5 text-left text-sm outline-none hover:bg-accent focus:bg-accent"
-                            onClick={() => queueSoapHandoff("provider")}
-                          >
-                            Send to provider (demo)
-                          </button>
-                        </div>
-                      </>
-                    ) : null}
-                  </div>
-                )}
+              <div className="mt-1">
+                <p className="truncate text-lg font-semibold leading-tight">
+                  {patient.displayName}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  MRN {patient.mrn} · DOB {patient.dateOfBirth}
+                </p>
               </div>
             </>
           ) : (
             <p className="text-sm text-muted-foreground">No patient selected</p>
           )}
         </div>
-        <div className="flex min-w-0 flex-1 flex-col gap-2 sm:max-w-md sm:items-end">
+        <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:max-w-md sm:items-end sm:text-right">
           <p className="text-[0.65rem] font-semibold uppercase text-muted-foreground">
             Schedule
           </p>
           {appointments.length === 0 ? (
             <p className="text-xs text-muted-foreground">No appointments on file</p>
           ) : (
-            <ul className="w-full space-y-1 text-right text-xs">
+            <ul className="w-full space-y-1 text-xs sm:text-right">
               {appointments.slice(0, 3).map((a) => (
                 <li key={a.id} className="truncate">
                   <span className="font-medium">{a.title}</span> ·{" "}
@@ -631,7 +795,7 @@ export function EncounterWorkspace({
             <Button
               type="button"
               size="sm"
-              className="mt-2 w-full sm:w-auto"
+              className="mt-1 w-full sm:mt-0 sm:w-auto"
               onClick={onStartEncounter}
             >
               Start encounter
@@ -640,8 +804,9 @@ export function EncounterWorkspace({
         </div>
       </div>
 
-      <ScrollArea className="min-h-[min(52vh,560px)] max-h-[min(68vh,720px)]">
-        <div className="space-y-3 px-3 py-3 pr-4">
+      <div className="relative min-h-0 flex-1 overflow-hidden">
+        <ScrollArea className="absolute inset-0 h-full w-full overflow-hidden">
+          <div className="space-y-3 px-3 py-3 pr-4">
           <p className="border-b border-dashed border-border/60 pb-2 text-[0.65rem] text-muted-foreground">
             Chart search, SOAP (“generate soap note”, “update soap …”), treatment plan, or prescribe — type below.
           </p>
@@ -691,214 +856,95 @@ export function EncounterWorkspace({
             </div>
           )}
 
-          {showDocsSection && (
-            <>
-              <Separator className="my-4" />
-              <p className="text-[0.65rem] font-semibold uppercase text-muted-foreground">
-                Documentation (edit anytime)
-              </p>
-
-              <div className="grid gap-3 lg:grid-cols-1">
-                {soapVisible && (
-                  <Card className="border-border/80">
-                    <CardHeader className="pb-2">
-                      <CardTitle className="flex items-center gap-2 text-sm">
-                        <ClipboardList className="size-4" />
-                        SOAP note
-                      </CardTitle>
-                      <CardDescription className="text-xs">
-                        Subjective · Objective · Assessment · Plan
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <Textarea
-                        className="min-h-[140px] font-mono text-xs"
-                        value={soapNote}
-                        onChange={(e) => onSoapChange(e.target.value)}
-                        disabled={visitFinalized || !canEditDocs}
-                        spellCheck={false}
-                        placeholder="S: … O: … A: … P: …"
-                      />
-                    </CardContent>
-                  </Card>
-                )}
-
-                {planVisible && (
-                  <Card className="border-border/80">
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm">Treatment plan</CardTitle>
-                      <CardDescription className="text-xs">
-                        Goals, meds, education, follow-up
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <Textarea
-                        className="min-h-[120px] text-xs"
-                        value={treatmentPlan}
-                        onChange={(e) => onPlanChange(e.target.value)}
-                        disabled={visitFinalized || !canEditDocs}
-                      />
-                    </CardContent>
-                  </Card>
-                )}
-
-                {rxLines.length > 0 && (
-                  <Card className="border-border/80">
-                    <CardHeader className="pb-2">
-                      <CardTitle className="flex items-center gap-2 text-sm">
-                        <Pill className="size-4" />
-                        Prescription
-                      </CardTitle>
-                      <CardDescription className="text-xs">
-                        Order lines (demo e-prescribe)
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                      <div className="flex flex-wrap gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-8 gap-1 text-[0.7rem]"
-                          disabled={visitFinalized || !canEditDocs}
-                          onClick={() => setRxDialogOpen(true)}
-                        >
-                          <Plus className="size-3.5" />
-                          Add line
-                        </Button>
-                      </div>
-                      {rxLines.map((line, idx) => (
-                        <div
-                          key={line.id}
-                          className="space-y-2 rounded-lg border bg-muted/15 p-3"
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-[0.65rem] font-semibold uppercase text-muted-foreground">
-                              Line {idx + 1}
-                            </span>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="size-7 text-muted-foreground"
-                              disabled={visitFinalized || !canEditDocs}
-                              onClick={() =>
-                                onRxLinesChange(rxLines.filter((_, i) => i !== idx))
-                              }
-                              aria-label="Remove line"
-                            >
-                              <Trash2 className="size-3.5" />
-                            </Button>
-                          </div>
-                          <div className="grid gap-2 sm:grid-cols-2">
-                            <div className="space-y-1">
-                              <Label className="text-[0.65rem]">Medication</Label>
-                              <Input
-                                className="h-9 text-xs"
-                                value={line.drugName}
-                                onChange={(e) => {
-                                  const next = [...rxLines];
-                                  next[idx] = { ...line, drugName: e.target.value };
-                                  onRxLinesChange(next);
-                                }}
-                                disabled={visitFinalized || !canEditDocs}
-                              />
-                            </div>
-                            <div className="space-y-1">
-                              <Label className="text-[0.65rem]">Strength</Label>
-                              <Input
-                                className="h-9 text-xs"
-                                value={line.strength}
-                                onChange={(e) => {
-                                  const next = [...rxLines];
-                                  next[idx] = { ...line, strength: e.target.value };
-                                  onRxLinesChange(next);
-                                }}
-                                disabled={visitFinalized || !canEditDocs}
-                              />
-                            </div>
-                            <div className="space-y-1">
-                              <Label className="text-[0.65rem]">Quantity</Label>
-                              <Input
-                                className="h-9 text-xs"
-                                value={line.quantity}
-                                onChange={(e) => {
-                                  const next = [...rxLines];
-                                  next[idx] = { ...line, quantity: e.target.value };
-                                  onRxLinesChange(next);
-                                }}
-                                disabled={visitFinalized || !canEditDocs}
-                              />
-                            </div>
-                            <div className="space-y-1">
-                              <Label className="text-[0.65rem]">Refills</Label>
-                              <Input
-                                type="number"
-                                className="h-9 text-xs"
-                                value={line.refills}
-                                onChange={(e) => {
-                                  const next = [...rxLines];
-                                  next[idx] = {
-                                    ...line,
-                                    refills: Number(e.target.value) || 0,
-                                  };
-                                  onRxLinesChange(next);
-                                }}
-                                disabled={visitFinalized || !canEditDocs}
-                              />
-                            </div>
-                          </div>
-                          <div className="space-y-1">
-                            <Label className="text-[0.65rem]">Sig (directions)</Label>
-                            <Textarea
-                              className="min-h-[56px] text-xs"
-                              value={line.sig}
-                              onChange={(e) => {
-                                const next = [...rxLines];
-                                next[idx] = { ...line, sig: e.target.value };
-                                onRxLinesChange(next);
-                              }}
-                              disabled={visitFinalized || !canEditDocs}
-                            />
-                          </div>
-                        </div>
-                      ))}
-                    </CardContent>
-                  </Card>
-                )}
-              </div>
-            </>
-          )}
-
           <div ref={bottomRef} />
-        </div>
-      </ScrollArea>
+          </div>
+        </ScrollArea>
+      </div>
 
-      <div className="border-t border-border/60 bg-background p-3">
-        <div className="mx-auto flex max-w-2xl gap-2">
-          <Textarea
-            placeholder="Message the encounter… (chart search, “generate soap note”, “treatment plan”, “prescribe”)"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            className="min-h-[48px] flex-1 resize-none text-xs"
-            disabled={disabled || pending}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void send();
-              }
-            }}
-          />
-          <Button
-            type="button"
-            size="icon"
-            className="h-[48px] w-11 shrink-0"
-            disabled={disabled || pending || !input.trim()}
-            onClick={() => void send()}
-            aria-label="Send"
-          >
-            <Send className="size-4" />
-          </Button>
+      <div className="shrink-0 border-t border-border/60 bg-muted/10 px-3 py-2.5">
+        <div className="mx-auto flex w-full max-w-5xl flex-col gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+            <span className="text-[0.65rem] font-medium uppercase tracking-wide text-muted-foreground">
+              Documentation
+            </span>
+            {nextAction ? (
+              <p className="max-w-[min(100%,28rem)] truncate text-right text-[0.65rem] text-muted-foreground">
+                <span className="font-medium text-foreground">Next: </span>
+                {nextAction}
+              </p>
+            ) : null}
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Button
+              type="button"
+              variant={soapNote.trim() ? "default" : "outline"}
+              size="sm"
+              className="h-9 gap-1.5 px-2.5 text-xs"
+              disabled={visitFinalized || !canEditDocs}
+              onClick={() => setSoapEditOpen(true)}
+              aria-label="SOAP note"
+              title="SOAP note"
+            >
+              <FileText className="size-4 shrink-0" />
+              <span>SOAP</span>
+            </Button>
+            <Button
+              type="button"
+              variant={treatmentPlan.trim() ? "default" : "outline"}
+              size="sm"
+              className="h-9 gap-1.5 px-2.5 text-xs"
+              disabled={visitFinalized || !canEditDocs}
+              onClick={() => setPlanEditOpen(true)}
+              aria-label="Treatment plan"
+              title="Treatment plan"
+            >
+              <ClipboardList className="size-4 shrink-0" />
+              <span>Plan</span>
+            </Button>
+            <Button
+              type="button"
+              variant={rxLines.length > 0 ? "default" : "outline"}
+              size="sm"
+              className="h-9 gap-1.5 px-2.5 text-xs"
+              disabled={visitFinalized || !canEditDocs}
+              onClick={() => setRxListOpen(true)}
+              aria-label="Prescriptions"
+              title="Prescriptions"
+            >
+              <Pill className="size-4 shrink-0" />
+              <span>Rx</span>
+              {rxLines.length > 0 ? (
+                <Badge variant="secondary" className="px-1.5 py-0 text-[0.65rem] font-normal tabular-nums">
+                  {rxLines.length}
+                </Badge>
+              ) : null}
+            </Button>
+          </div>
+          <div className="flex min-h-0 w-full min-w-0 gap-2">
+            <Textarea
+              placeholder="Message the encounter… (chart search, “generate soap note”, “treatment plan”, “prescribe”)"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              className="min-h-[52px] min-w-0 flex-1 resize-none text-xs"
+              disabled={disabled || pending}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  void send();
+                }
+              }}
+            />
+            <Button
+              type="button"
+              size="icon"
+              className="h-[52px] w-11 shrink-0 self-end"
+              disabled={disabled || pending || !input.trim()}
+              onClick={() => void send()}
+              aria-label="Send"
+            >
+              <Send className="size-4" />
+            </Button>
+          </div>
         </div>
       </div>
     </div>

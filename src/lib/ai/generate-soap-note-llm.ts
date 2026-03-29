@@ -1,5 +1,5 @@
 import type { PatientClinicalSummary } from "@/types/workflow";
-import { createXaiClient, getXaiWorkflowModel } from "@/lib/ai/xai-client";
+import { createXaiClientOrThrow, getXaiWorkflowModel } from "@/lib/ai/xai-client";
 import { isXaiApiKeyConfigured } from "@/lib/ai/config";
 
 export type SoapNoteRequest = {
@@ -9,12 +9,22 @@ export type SoapNoteRequest = {
   providerMessage?: string;
 };
 
+export type SoapNoteAgentResult = {
+  soap: string;
+  /** Short line for the encounter chat UI — how the note was derived (no client-side regex). */
+  chatAcknowledgment: string;
+};
+
 /**
- * Generates a patient-specific SOAP note via xAI Grok. Falls back to a deterministic stub if no API key.
+ * SOAP documentation agent (Grok). Returns note + chat acknowledgment in one structured call.
  */
 export async function generateSoapNoteWithLlm(
   input: SoapNoteRequest,
-): Promise<{ soap: string; source: "xai" | "mock" }> {
+): Promise<SoapNoteAgentResult> {
+  if (!isXaiApiKeyConfigured()) {
+    throw new Error("XAI_API_KEY is required for SOAP generation");
+  }
+
   const clinical = input.clinical;
   const ctx = clinical
     ? [
@@ -29,10 +39,18 @@ export async function generateSoapNoteWithLlm(
     : "";
 
   const system = `You are assisting a licensed clinician in a hackathon demo with documentation only.
-Write a concise SOAP note for ONE ambulatory visit. Use US clinical style.
-Output plain text with exactly these section headers on their own lines: S:  O:  A:  P:
-If the provider message is free-text dictation (e.g. "the soap is …", "update soap …"), or a structured visit outline (lines starting with Problem:, Medications:, Lifestyle:, Follow-up:), convert it into proper S/O/A/P using the chart context — fold Problem into S/A as appropriate, Medications and Lifestyle into P, Follow-up into P — do not drop clinical content they stated.
-Keep each section focused (no filler). Do not invent dangerous allergies or contraindications not in the data.`;
+You must respond with JSON only (no markdown) using this exact shape:
+{
+  "soap": string,
+  "chatAcknowledgment": string
+}
+
+Field rules:
+- soap: A concise SOAP note for ONE ambulatory visit. US clinical style. Plain text with section headers on their own lines: S:  O:  A:  P:
+  If the provider message is free-text dictation or a structured visit outline (Problems/Medications/etc.), convert it into proper S/O/A/P using chart context — do not drop stated clinical content.
+- chatAcknowledgment: One or two short sentences (max ~280 characters) for an in-app chat bubble. Explain briefly whether you converted the user's dictation/structured outline, expanded a brief request using chart context, or similar. Do not repeat the full SOAP. Professional, second person ("your note") or neutral.
+
+Do not invent dangerous allergies or contraindications not supported by the data.`;
 
   const user = `Patient: ${input.patientDisplayName}
 Visit: ${input.appointmentTitle}
@@ -40,84 +58,51 @@ Visit: ${input.appointmentTitle}
 Chart context:
 ${ctx}${userExtra}`;
 
-  if (!isXaiApiKeyConfigured()) {
-    return {
-      source: "mock",
-      soap: buildMockSoap(
-        input.patientDisplayName,
-        input.appointmentTitle,
-        clinical,
-        input.providerMessage,
-      ),
-    };
-  }
+  const client = createXaiClientOrThrow();
 
-  const client = createXaiClient();
-  if (!client) {
-    return {
-      source: "mock",
-      soap: buildMockSoap(
-        input.patientDisplayName,
-        input.appointmentTitle,
-        clinical,
-        input.providerMessage,
-      ),
-    };
-  }
-
+  let raw: string;
   try {
     const completion = await client.chat.completions.create({
       model: getXaiWorkflowModel(),
       temperature: 0.2,
+      response_format: { type: "json_object" },
       messages: [
         { role: "system", content: system },
         { role: "user", content: user },
       ],
     });
-    const raw = completion.choices[0]?.message?.content?.trim() ?? "";
-    if (!raw) {
-      return {
-        source: "mock",
-        soap: buildMockSoap(
-          input.patientDisplayName,
-          input.appointmentTitle,
-          clinical,
-          input.providerMessage,
-        ),
-      };
-    }
-    return { source: "xai", soap: raw };
-  } catch {
-    return {
-      source: "mock",
-      soap: buildMockSoap(
-        input.patientDisplayName,
-        input.appointmentTitle,
-        clinical,
-        input.providerMessage,
-      ),
-    };
+    raw = completion.choices[0]?.message?.content?.trim() ?? "";
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "xAI request failed";
+    throw new Error(`SOAP agent API error: ${msg}`);
   }
-}
 
-function buildMockSoap(
-  name: string,
-  title: string,
-  clinical: PatientClinicalSummary | null,
-  providerMessage?: string,
-) {
-  const dx =
-    clinical?.diagnoses
-      .slice(0, 2)
-      .map((d) => d.description)
-      .join("; ") || "Chronic conditions per chart";
-  const pm = providerMessage?.trim();
-  const subjective =
-    pm ?
-      (pm.length > 420 ? `${pm.slice(0, 420)}…` : pm)
-    : `${name} here for ${title.toLowerCase()}. Interval history reviewed; no acute red flags documented in this demo.`;
-  return `S: ${subjective}
-O: Vitals and exam: align with clinic protocol before signing.
-A: ${dx}.
-P: Continue home monitoring; reconcile medications; follow-up per clinic standard.`;
+  if (!raw) {
+    throw new Error("SOAP agent returned empty content");
+  }
+
+  let parsed: { soap?: unknown; chatAcknowledgment?: unknown };
+  try {
+    parsed = JSON.parse(raw) as { soap?: unknown; chatAcknowledgment?: unknown };
+  } catch {
+    throw new Error("SOAP agent returned non-JSON");
+  }
+
+  const soap = typeof parsed.soap === "string" ? parsed.soap.trim() : "";
+  if (!soap || !/S:\s*/im.test(soap)) {
+    throw new Error("SOAP agent: invalid or empty soap field (expected S: section)");
+  }
+
+  let chatAcknowledgment =
+    typeof parsed.chatAcknowledgment === "string" ?
+      parsed.chatAcknowledgment.trim()
+    : "";
+  if (!chatAcknowledgment) {
+    throw new Error("SOAP agent: chatAcknowledgment required");
+  }
+  if (chatAcknowledgment.length > 400) {
+    chatAcknowledgment = `${chatAcknowledgment.slice(0, 397)}…`;
+  }
+
+  return { soap, chatAcknowledgment };
 }

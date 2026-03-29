@@ -35,7 +35,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={cn("font-sans", inter.variable)}>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} min-h-svh antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} min-h-svh overflow-x-hidden antialiased`}
       >
         <AppProviders>{children}</AppProviders>
       </body>

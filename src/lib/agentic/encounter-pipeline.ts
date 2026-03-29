@@ -1,10 +1,12 @@
-import type { PatientClinicalSummary, PrescriptionLine } from "@/types/workflow";
 import type {
   AgenticEncounterResult,
   AgentPipelineStep,
   PaLineDecision,
+  RunPipelineInput,
 } from "@/types/agentic";
-import { evaluatePrescriptionCoverage } from "@/lib/benefits/coverage-engine";
+import { fetchAgenticCoverage } from "@/lib/agentic/coverage-fetch";
+
+export type { RunPipelineInput } from "@/types/agentic";
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -12,13 +14,22 @@ function buildSoapAddendum(
   patientName: string,
   decisions: PaLineDecision[],
   coverage: AgenticEncounterResult["coverage"],
+  opts: {
+    documentationAddendum?: string;
+  },
 ): string {
   const lines = [
     "",
     "---",
     `Agentic encounter addendum (${new Date().toLocaleString()})`,
+    "Coverage adjudication: Grok benefits agent (structured JSON).",
     `Benefits context: ${coverage.plan.name} (${coverage.plan.planCode})`,
   ];
+
+  if (opts.documentationAddendum?.trim()) {
+    lines.push(opts.documentationAddendum.trim());
+  }
+
   for (const d of decisions) {
     const dest =
       d.route === "payer_prior_auth" ? "payer prior-auth queue"
@@ -43,28 +54,15 @@ function buildSoapAddendum(
     );
   } else {
     lines.push(
-      "Routing: standard e-prescribe path — no payer PA hold for these lines under current rules.",
+      "Routing: standard e-prescribe path — no payer PA hold for these lines under agent output.",
     );
   }
   lines.push(`Patient: ${patientName}`);
   return lines.join("\n");
 }
 
-export type RunPipelineInput = {
-  patientDisplayName: string;
-  patientId: string;
-  appointmentId: string;
-  clinical: PatientClinicalSummary | null;
-  prescriptionLines: PrescriptionLine[];
-  treatmentPlan: string;
-  pharmacyId: string;
-  insurancePlanId?: string;
-  preferredPharmacyId?: string;
-  coverageDemoTag?: import("@/types/benefits").CoverageDemoTag;
-};
-
 /**
- * Full agentic sequence for finalize: sense → decide → document → route (mock).
+ * Full agentic sequence for finalize: sense → decide → document → route (mock delays + server-side Grok coverage).
  */
 export async function runAgenticEncounterPipeline(
   input: RunPipelineInput,
@@ -82,27 +80,19 @@ export async function runAgenticEncounterPipeline(
 
   onStep({
     agent: "Eligibility & coverage agent",
-    action: "Resolving member plan and formulary tier…",
+    action: "Calling agentic benefits adjudication (server)…",
   });
-  await delay(380);
+  await delay(200);
 
   onStep({
     agent: "Formulary check agent",
-    action: "Cross-walking NDC tokens to PA / step-therapy rules…",
+    action: "Synthesizing per-line routing with coverage model…",
   });
-  await delay(420);
 
-  const coverage = evaluatePrescriptionCoverage({
-    patient: {
-      id: input.patientId,
-      insurancePlanId: input.insurancePlanId,
-      preferredPharmacyId: input.preferredPharmacyId,
-      coverageDemoTag: input.coverageDemoTag,
-    },
-    pharmacyId: input.pharmacyId,
-    prescriptionLines: input.prescriptionLines,
-    treatmentPlanText: input.treatmentPlan,
-  });
+  const agentic = await fetchAgenticCoverage(input);
+  const coverage = agentic.coverage;
+
+  await delay(220);
 
   const paDecisions: PaLineDecision[] = coverage.lines.map((l) => ({
     drugName: l.drugName,
@@ -138,6 +128,9 @@ export async function runAgenticEncounterPipeline(
     input.patientDisplayName,
     paDecisions,
     coverage,
+    {
+      documentationAddendum: agentic.documentationAddendum,
+    },
   );
 
   onStep({
@@ -157,7 +150,7 @@ export async function runAgenticEncounterPipeline(
   const timelineEntries: AgenticEncounterResult["timelineEntries"] = [
     {
       title: "Agentic review complete",
-      detail: `Chart context loaded; allergies noted (${allergyHint.slice(0, 80)}).`,
+      detail: `Chart context loaded; allergies noted (${allergyHint.slice(0, 80)}). Benefits adjudication: Grok.`,
     },
     {
       title: `Insurance checked — ${coverage.plan.name}`,
@@ -194,7 +187,8 @@ export async function runAgenticEncounterPipeline(
   ];
 
   const patientNotification =
-    coverage.holdForPriorAuth ?
+    agentic.patientNotification ??
+    (coverage.holdForPriorAuth ?
       {
         title: "Prior authorization in progress",
         body: `Your plan (${coverage.plan.name}) is reviewing one or more medications. We'll notify you when you can pick up or if we need more information.`,
@@ -207,7 +201,7 @@ export async function runAgenticEncounterPipeline(
     : {
         title: "Prescription on the way",
         body: "Medications are being routed per your coverage and pharmacy selection unless your clinician noted otherwise.",
-      };
+      });
 
   return {
     soapAddendum,

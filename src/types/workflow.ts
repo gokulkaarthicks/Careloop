@@ -399,12 +399,12 @@ export interface PayerProfile {
   planType: string;
 }
 
-/** Deterministic “AI read” of structured chart data for provider review (LLM-ready shape). */
+/** Post-encounter chart review artifact from the documentation integrity agent. */
 export interface ChartInferenceReview {
   appointmentId: UUID;
   patientId: UUID;
   generatedAt: ISODateTime;
-  source: "rules-v1";
+  source: "llm-v1";
   allergies: { substance: string; severity: string }[];
   medications: { name: string; dose: string; frequency: string }[];
   problems: string[];
@@ -499,7 +499,7 @@ export interface CareLoopSnapshot {
   aiSummaries: Record<UUID, AiHistorySummary>;
   /** Keyed by appointment id */
   providerVisitDrafts: Record<UUID, ProviderVisitDraft>;
-  /** Frozen chart inference snapshot at finalize; live UI can mirror rules-v1 */
+  /** Frozen chart inference snapshot after finalize (LLM agent) */
   chartInferenceByAppointment: Record<UUID, ChartInferenceReview>;
   /** After finalize — patient-safe copy */
   patientFacingSummariesByAppointment: Record<UUID, PatientFacingVisitSummary>;

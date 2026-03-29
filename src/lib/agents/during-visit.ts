@@ -1,5 +1,4 @@
 import type {
-  ChartInferenceReview,
   PatientClinicalSummary,
   PatientFacingVisitSummary,
   PharmacyHandoffPayload,
@@ -29,77 +28,6 @@ export function buildSoapAiDraft(args: {
 O: ${vitStr}. Physical exam — document pertinent positives/negatives per protocol.
 A: ${dx}. [Provider to refine differential and link to today’s data.]
 P: Align meds and education with shared decision-making; document orders below.`;
-}
-
-export function buildChartInferenceReview(args: {
-  appointmentId: UUID;
-  patientId: UUID;
-  clinical: PatientClinicalSummary | undefined;
-}): ChartInferenceReview {
-  const c = args.clinical;
-  const allergies =
-    c?.allergies?.map((a) => ({ substance: a.substance, severity: a.severity })) ??
-    [];
-  const medications =
-    c?.medications?.map((m) => ({
-      name: m.name,
-      dose: m.dose,
-      frequency: m.frequency,
-    })) ?? [];
-  const problems = c?.diagnoses?.map((d) => `${d.code}: ${d.description}`) ?? [];
-  const vit = c?.recentVitals?.[0];
-  const vitalsNarrative = vit
-    ? `Last stored: ${vit.recordedAt?.slice(0, 10)} — BP ${vit.systolicMmHg ?? "—"}/${vit.diastolicMmHg ?? "—"} mmHg`
-    : null;
-
-  const attentionFlags: { label: string; detail: string }[] = [];
-  if (allergies.length > 0) {
-    attentionFlags.push({
-      label: "Allergy list non-empty",
-      detail: "Cross-check any new therapy against documented reactions.",
-    });
-  }
-  if (vit?.systolicMmHg != null && vit.systolicMmHg >= 130) {
-    attentionFlags.push({
-      label: "Elevated BP in last vitals",
-      detail: "Correlate with home readings and symptoms today.",
-    });
-  }
-
-  return {
-    appointmentId: args.appointmentId,
-    patientId: args.patientId,
-    generatedAt: ts(),
-    source: "rules-v1",
-    allergies,
-    medications,
-    problems,
-    vitalsNarrative,
-    attentionFlags,
-  };
-}
-
-export function buildSuggestedNextSteps(args: {
-  clinical: PatientClinicalSummary | undefined;
-  treatmentPlan: string;
-  soapNote: string;
-}): string[] {
-  const steps: string[] = [
-    "Confirm medication list with patient (pill bottles or pharmacy history).",
-    "Reconcile AI draft SOAP with your exam findings before signing.",
-  ];
-  const plan = args.treatmentPlan.toLowerCase();
-  if (plan.includes("lab") || plan.includes("a1c") || plan.includes("bmp")) {
-    steps.push("Place orders for labs discussed in plan; schedule result review.");
-  }
-  if (plan.includes("follow") || plan.includes("return")) {
-    steps.push("Set follow-up interval in scheduling per plan.");
-  }
-  if ((args.clinical?.allergies?.length ?? 0) > 0) {
-    steps.push("Document allergy counseling if new drug class prescribed.");
-  }
-  steps.push("When ready, finalize to transmit Rx and patient instructions.");
-  return steps.slice(0, 6);
 }
 
 export function buildPatientFacingVisitSummary(args: {
